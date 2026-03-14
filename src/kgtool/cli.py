@@ -1335,8 +1335,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     if not effective_argv:
         parser.print_help()
-        print()
-        print_usage_guide()
         return 0
     args = parser.parse_args(effective_argv)
     try:
