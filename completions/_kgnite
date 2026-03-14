@@ -1,4 +1,4 @@
-#compdef kgtool
+#compdef kgnite
 
 local -a commands
 commands=(

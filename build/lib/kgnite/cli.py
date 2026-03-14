@@ -21,63 +21,63 @@ from kagglehub.handle import (
     parse_notebook_handle,
 )
 
-APP_NAME = "kgtool"
+APP_NAME = "kgnite"
 USAGE_TEXT = """\
 Common workflows:
-  kgtool doctor
-  kgtool completions
-  kgtool search datasets "vision transformer" --sort-by votes
-  kgtool info dataset zillow/zecon
-  kgtool files competition titanic
-  kgtool download dataset zillow/zecon --output-dir ./downloads
-  kgtool pull-notebook owner/notebook --output-dir ./notebooks
-  kgtool submit titanic --file ./submission.csv --message "baseline"
-  kgtool leaderboard titanic --show
-  kgtool upload-dataset ./my-dataset --handle me/my-dataset --message "v1"
-  kgtool upload-model ./my-model --handle me/model/pytorch/base --message "v1"
-  kgtool browse
+  kgnite doctor
+  kgnite completions
+  kgnite search datasets "vision transformer" --sort-by votes
+  kgnite info dataset zillow/zecon
+  kgnite files competition titanic
+  kgnite download dataset zillow/zecon --output-dir ./downloads
+  kgnite pull-notebook owner/notebook --output-dir ./notebooks
+  kgnite submit titanic --file ./submission.csv --message "baseline"
+  kgnite leaderboard titanic --show
+  kgnite upload-dataset ./my-dataset --handle me/my-dataset --message "v1"
+  kgnite upload-model ./my-model --handle me/model/pytorch/base --message "v1"
+  kgnite browse
 """
 COMMAND_HINTS = {
-    "kgtool": [
-        "kgtool usage",
-        "kgtool completions",
-        'kgtool search datasets "titanic"',
-        "kgtool browse",
+    "kgnite": [
+        "kgnite usage",
+        "kgnite completions",
+        'kgnite search datasets "titanic"',
+        "kgnite browse",
     ],
-    "kgtool leaderboard": [
-        "kgtool leaderboard titanic --show",
-        "kgtool leaderboard titanic --download --output-dir ./leaderboards",
+    "kgnite leaderboard": [
+        "kgnite leaderboard titanic --show",
+        "kgnite leaderboard titanic --download --output-dir ./leaderboards",
     ],
-    "kgtool submissions": [
-        "kgtool submissions titanic",
-        "kgtool submissions titanic --json",
+    "kgnite submissions": [
+        "kgnite submissions titanic",
+        "kgnite submissions titanic --json",
     ],
-    "kgtool upload-dataset": [
-        "kgtool upload-dataset ./my-dataset --handle yourname/my-dataset --message \"v1\"",
-        "kgtool upload-dataset ./my-dataset --version --message \"march refresh\"",
+    "kgnite upload-dataset": [
+        "kgnite upload-dataset ./my-dataset --handle yourname/my-dataset --message \"v1\"",
+        "kgnite upload-dataset ./my-dataset --version --message \"march refresh\"",
     ],
-    "kgtool upload-model": [
-        "kgtool upload-model ./my-model --handle yourname/my-model/pytorch/base --message \"v1\"",
-        "kgtool upload-model ./my-model --action create",
+    "kgnite upload-model": [
+        "kgnite upload-model ./my-model --handle yourname/my-model/pytorch/base --message \"v1\"",
+        "kgnite upload-model ./my-model --action create",
     ],
-    "kgtool browse": [
-        "kgtool browse",
-        "kgtool browse --resource datasets --search titanic",
-        "kgtool browse --resource kernels --search rag --output-dir ./tmp",
+    "kgnite browse": [
+        "kgnite browse",
+        "kgnite browse --resource datasets --search titanic",
+        "kgnite browse --resource kernels --search rag --output-dir ./tmp",
     ],
-    "kgtool completions": [
-        "kgtool completions",
-        "kgtool completions --shell zsh",
-        "kgtool completions --print",
+    "kgnite completions": [
+        "kgnite completions",
+        "kgnite completions --shell zsh",
+        "kgnite completions --print",
     ],
 }
 
 
-class KgtoolError(RuntimeError):
+class KgniteError(RuntimeError):
     pass
 
 
-class KgtoolArgumentParser(argparse.ArgumentParser):
+class KgniteArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         self.print_usage(sys.stdout)
         print(f"{self.prog}: error: {message}")
@@ -103,12 +103,12 @@ def run_kaggle(args: list[str], *, check: bool = True) -> subprocess.CompletedPr
             text=True,
         )
     except FileNotFoundError as exc:
-        raise KgtoolError("The `kaggle` CLI is not installed or not on PATH.") from exc
+        raise KgniteError("The `kaggle` CLI is not installed or not on PATH.") from exc
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
         stdout = (exc.stdout or "").strip()
         message = stderr or stdout or f"`{' '.join(command)}` failed"
-        raise KgtoolError(message) from exc
+        raise KgniteError(message) from exc
 
 
 def parse_csv_output(text: str) -> list[dict[str, str]]:
@@ -252,13 +252,13 @@ def detect_shell() -> str:
 
 
 def completions_dir() -> Path:
-    return Path.home() / ".local" / "share" / "kgtool" / "completions"
+    return Path.home() / ".local" / "share" / "kgnite" / "completions"
 
 
 def bash_completion_script() -> str:
     return textwrap.dedent(
         """\
-        _kgtool_completions() {
+        _kgnite_completions() {
           local cur prev words cword
           _init_completion || return
 
@@ -337,7 +337,7 @@ def bash_completion_script() -> str:
           esac
         }
 
-        complete -F _kgtool_completions kgtool
+        complete -F _kgnite_completions kgnite
         """
     )
 
@@ -345,7 +345,7 @@ def bash_completion_script() -> str:
 def zsh_completion_script() -> str:
     return textwrap.dedent(
         """\
-        #compdef kgtool
+        #compdef kgnite
 
         local -a commands
         commands=(
@@ -440,7 +440,7 @@ def shell_completion_script(shell: str) -> str:
         return bash_completion_script()
     if shell == "zsh":
         return zsh_completion_script()
-    raise KgtoolError(f"Unsupported shell for completions: {shell}")
+    raise KgniteError(f"Unsupported shell for completions: {shell}")
 
 
 def normalize_resource(resource: str) -> str:
@@ -458,7 +458,7 @@ def normalize_resource(resource: str) -> str:
     }
     normalized = mapping.get(resource.lower())
     if not normalized:
-        raise KgtoolError(f"Unsupported resource: {resource}")
+        raise KgniteError(f"Unsupported resource: {resource}")
     return normalized
 
 
@@ -507,7 +507,7 @@ def handle_url(resource: str, handle: str) -> str:
                 return f"{url}/{parsed.version}"
             return url
         return f"https://www.kaggle.com/models/{handle}"
-    raise KgtoolError(f"Unsupported resource: {resource}")
+    raise KgniteError(f"Unsupported resource: {resource}")
 
 
 def auth_summary() -> dict[str, Any]:
@@ -526,7 +526,7 @@ def auth_summary() -> dict[str, Any]:
             stripped = line.strip()
             if stripped.startswith("- auth_method:"):
                 auth_method = stripped.split(":", 1)[1].strip()
-    except KgtoolError as exc:
+    except KgniteError as exc:
         config_view_error = str(exc)
 
     return {
@@ -625,7 +625,7 @@ def list_files(resource: str, handle: str, *, page_size: int | None = None, page
     elif resource == "models":
         command = ["models", "instances", "versions", "files", handle, "--csv"]
     else:
-        raise KgtoolError(f"Files listing is not supported for {resource}")
+        raise KgniteError(f"Files listing is not supported for {resource}")
 
     if page_size is not None and resource in {"competitions", "models"}:
         command += ["--page-size", str(page_size)]
@@ -638,13 +638,13 @@ def list_files(resource: str, handle: str, *, page_size: int | None = None, page
 def load_json_file(directory: Path, pattern: str) -> dict[str, Any]:
     matches = list(directory.glob(pattern))
     if not matches:
-        raise KgtoolError(f"Expected metadata file matching {pattern} was not created.")
+        raise KgniteError(f"Expected metadata file matching {pattern} was not created.")
     with matches[0].open() as fh:
         return json.load(fh)
 
 
 def dataset_info(handle: str) -> dict[str, Any]:
-    with tempfile.TemporaryDirectory(prefix="kgtool-dataset-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="kgnite-dataset-") as tmpdir:
         run_kaggle(["datasets", "metadata", handle, "--path", tmpdir])
         metadata = load_json_file(Path(tmpdir), "dataset-metadata.json")
     return {
@@ -678,7 +678,7 @@ def kernel_info(handle: str) -> dict[str, Any]:
 
 def model_info(handle: str) -> dict[str, Any]:
     parts = handle.split("/")
-    with tempfile.TemporaryDirectory(prefix="kgtool-model-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="kgnite-model-") as tmpdir:
         if len(parts) == 2:
             run_kaggle(["models", "get", handle, "--path", tmpdir])
             metadata = load_json_file(Path(tmpdir), "model-metadata.json")
@@ -691,7 +691,7 @@ def model_info(handle: str) -> dict[str, Any]:
             metadata = {"version_handle": handle}
             files = list_files("models", handle)
         else:
-            raise KgtoolError(
+            raise KgniteError(
                 "Model handle must be <owner>/<model>, <owner>/<model>/<framework>/<variation>, "
                 "or <owner>/<model>/<framework>/<variation>/<version>."
             )
@@ -715,7 +715,7 @@ def command_info(args: argparse.Namespace) -> int:
     elif resource == "models":
         payload = model_info(args.handle)
     else:
-        raise KgtoolError(f"Unsupported resource: {resource}")
+        raise KgniteError(f"Unsupported resource: {resource}")
 
     if args.json:
         print_json(payload)
@@ -767,7 +767,7 @@ def command_download(args: argparse.Namespace) -> int:
             output_dir=output_dir,
         )
     else:
-        raise KgtoolError(f"Unsupported download resource: {args.resource}")
+        raise KgniteError(f"Unsupported download resource: {args.resource}")
 
     payload = {
         "resource": args.resource,
@@ -796,7 +796,7 @@ def command_pull_notebook(args: argparse.Namespace) -> int:
 
 def command_submit(args: argparse.Namespace) -> int:
     if not args.file and not args.kernel:
-        raise KgtoolError("Provide either --file or --kernel for a competition submission.")
+        raise KgniteError("Provide either --file or --kernel for a competition submission.")
     command = ["competitions", "submit", args.competition, "--message", args.message]
     if args.file:
         command += ["--file", str(Path(args.file).expanduser().resolve())]
@@ -848,7 +848,7 @@ def command_submissions(args: argparse.Namespace) -> int:
     command = ["competitions", "submissions", args.competition, "--csv"]
     try:
         result = run_kaggle(command)
-    except KgtoolError as exc:
+    except KgniteError as exc:
         message = str(exc)
         if "ListSubmissions" in message or "400 Client Error" in message:
             friendly = {
@@ -860,7 +860,7 @@ def command_submissions(args: argparse.Namespace) -> int:
                 "next_steps": [
                     f"Open https://www.kaggle.com/competitions/{args.competition}",
                     "Accept the competition rules if required.",
-                    "Create a submission, then rerun `kgtool submissions`.",
+                    "Create a submission, then rerun `kgnite submissions`.",
                 ],
                 "upstream_error": message,
             }
@@ -971,12 +971,12 @@ def command_completions(args: argparse.Namespace) -> int:
     target_dir = completions_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
     if shell == "bash":
-        target_file = target_dir / "kgtool.bash"
+        target_file = target_dir / "kgnite.bash"
         rc_file = Path.home() / ".bashrc"
         source_line = f'source "{target_file}"'
         refresh_cmd = f'source "{target_file}"'
     else:
-        target_file = target_dir / "_kgtool"
+        target_file = target_dir / "_kgnite"
         rc_file = Path.home() / ".zshrc"
         source_line = f"fpath=({target_dir} $fpath)"
         refresh_cmd = f'fpath=("{target_dir}" $fpath); autoload -Uz compinit && compinit'
@@ -1012,7 +1012,7 @@ def command_completions(args: argparse.Namespace) -> int:
         print(f'  echo \'fpath=("{target_dir}" $fpath)\' >> "{rc_file}"')
         print(f'  echo \'autoload -Uz compinit && compinit\' >> "{rc_file}"')
     print()
-    print("Run `kgtool completions` again after reinstalling if you want to refresh the generated completion file.")
+    print("Run `kgnite completions` again after reinstalling if you want to refresh the generated completion file.")
     return 0
 
 
@@ -1027,7 +1027,7 @@ def infer_handle_from_row(resource: str, row: dict[str, str]) -> str:
         value = row.get(key)
         if value:
             return normalize_handle(resource, value)
-    raise KgtoolError(f"Could not infer handle from search result: {row}")
+    raise KgniteError(f"Could not infer handle from search result: {row}")
 
 
 def normalize_handle(resource: str, value: str) -> str:
@@ -1068,7 +1068,7 @@ def build_files_args(resource: str, handle: str) -> argparse.Namespace:
 def command_browse(args: argparse.Namespace) -> int:
     print("Interactive browse mode")
     print("Step 1: choose a resource from the menu below using a number or text, or type a search query directly.")
-    print("If you type a normal query like `llm` or `gemma`, kgtool will use `datasets` as the default resource.")
+    print("If you type a normal query like `llm` or `gemma`, kgnite will use `datasets` as the default resource.")
     print("Step 2: pick a result number.")
     print("Step 3: choose an action such as info, files, or download.")
     print()
@@ -1106,7 +1106,7 @@ def command_browse(args: argparse.Namespace) -> int:
 
     if not query:
         print("No search query entered.")
-        print("Try: kgtool browse --resource datasets --search titanic")
+        print("Try: kgnite browse --resource datasets --search titanic")
         print("Or rerun and enter a query such as: titanic, llm, rag, gemma")
         return 0
     search_args = argparse.Namespace(
@@ -1140,9 +1140,9 @@ def command_browse(args: argparse.Namespace) -> int:
     try:
         choice = int(raw_choice)
     except ValueError as exc:
-        raise KgtoolError("Browse choice must be a number.") from exc
+        raise KgniteError("Browse choice must be a number.") from exc
     if choice < 1 or choice > len(indexed_rows):
-        raise KgtoolError("Browse choice is out of range.")
+        raise KgniteError("Browse choice is out of range.")
 
     selected = indexed_rows[choice - 1]
     handle = infer_handle_from_row(resource, selected)
@@ -1188,17 +1188,17 @@ def command_browse(args: argparse.Namespace) -> int:
         destination = download_target_dir(resource, handle, choose_download_destination(resource))
         return command_pull_notebook(argparse.Namespace(handle=handle, output_dir=destination, json=False))
 
-    raise KgtoolError(f"Unsupported browse action: {action}")
+    raise KgniteError(f"Unsupported browse action: {action}")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = KgtoolArgumentParser(
+    parser = KgniteArgumentParser(
         prog=APP_NAME,
         description="Unified Kaggle helper for search, metadata, files, downloads, and notebook pulls.",
         epilog=textwrap.dedent(USAGE_TEXT),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    subparsers = parser.add_subparsers(dest="command", required=True, parser_class=KgtoolArgumentParser)
+    subparsers = parser.add_subparsers(dest="command", required=True, parser_class=KgniteArgumentParser)
 
     usage_parser = subparsers.add_parser("usage", help="Show example workflows and common command patterns.")
     usage_parser.set_defaults(func=command_usage)
@@ -1335,13 +1335,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     if not effective_argv:
         parser.print_help()
-        print()
-        print_usage_guide()
         return 0
     args = parser.parse_args(effective_argv)
     try:
         return args.func(args)
-    except KgtoolError as exc:
+    except KgniteError as exc:
         print(f"{APP_NAME}: {exc}", file=sys.stderr)
         return 2
     except Exception as exc:

@@ -1,4 +1,4 @@
-_kgtool_completions() {
+_kgnite_completions() {
   local cur prev words cword
   _init_completion || return
 
@@ -105,4 +105,4 @@ _kgtool_completions() {
   esac
 }
 
-complete -F _kgtool_completions kgtool
+complete -F _kgnite_completions kgnite

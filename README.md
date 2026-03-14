@@ -1,6 +1,6 @@
-# kgtool
+# kgnite
 
-`kgtool` is a command-line utility for working with Kaggle datasets, competitions, notebooks, models, downloads, uploads, and competition workflows.
+`kgnite` is a command-line utility for working with Kaggle datasets, competitions, notebooks, models, downloads, uploads, and competition workflows.
 
 It combines:
 
@@ -9,14 +9,14 @@ It combines:
 
 Quick entry points:
 
-- [QUICKSTART.md](/Users/rajeshsingh/myprojects/kgtool/QUICKSTART.md)
-- [Makefile](/Users/rajeshsingh/myprojects/kgtool/Makefile)
-- [completions/kgtool.bash](/Users/rajeshsingh/myprojects/kgtool/completions/kgtool.bash)
-- [completions/_kgtool](/Users/rajeshsingh/myprojects/kgtool/completions/_kgtool)
+- [QUICKSTART.md](/Users/rajeshsingh/myprojects/kgnite/QUICKSTART.md)
+- [Makefile](/Users/rajeshsingh/myprojects/kgnite/Makefile)
+- [completions/kgnite.bash](/Users/rajeshsingh/myprojects/kgnite/completions/kgnite.bash)
+- [completions/_kgnite](/Users/rajeshsingh/myprojects/kgnite/completions/_kgnite)
 
 ## 1. Configure Kaggle First
 
-`kgtool` depends on Kaggle authentication already being available on your machine.
+`kgnite` depends on Kaggle authentication already being available on your machine.
 
 Recommended auth method:
 
@@ -81,11 +81,11 @@ kaggle --version
 kaggle config view
 ```
 
-Check `kgtool` view of auth:
+Check `kgnite` view of auth:
 
 ```bash
-kgtool doctor
-kgtool doctor --json
+kgnite doctor
+kgnite doctor --json
 ```
 
 ## 2. Prerequisites
@@ -102,7 +102,7 @@ Optional but useful:
 - `zsh` or `bash`
 - `/usr/local/bin` write access if you want system-style installation
 
-## 3. Install kgtool
+## 3. Install kgnite
 
 There are two main ways to install it.
 
@@ -113,24 +113,24 @@ This is the recommended install for normal use.
 From the project root:
 
 ```bash
-cd /Users/rajeshsingh/myprojects/kgtool
+cd /Users/rajeshsingh/myprojects/kgnite
 bash scripts/install.sh
 ```
 
 What this does:
 
-1. Creates an isolated virtualenv in `~/.local/share/kgtool/venv`
-2. Installs `kgtool` into that virtualenv
-3. Tries to create a launcher at `/usr/local/bin/kgtool`
+1. Creates an isolated virtualenv in `~/.local/share/kgnite/venv`
+2. Installs `kgnite` into that virtualenv
+3. Tries to create a launcher at `/usr/local/bin/kgnite`
 
 If `/usr/local/bin` is writable, you are done.
 
 Verify:
 
 ```bash
-kgtool --help
-kgtool doctor
-kgtool completions
+kgnite --help
+kgnite doctor
+kgnite completions
 ```
 
 ### If `/usr/local/bin` is not writable
@@ -140,15 +140,15 @@ The installer prints a follow-up command.
 Example:
 
 ```bash
-sudo install -m 755 "/Users/rajeshsingh/.local/share/kgtool/kgtool-launcher" "/usr/local/bin/kgtool"
+sudo install -m 755 "/Users/rajeshsingh/.local/share/kgnite/kgnite-launcher" "/usr/local/bin/kgnite"
 ```
 
 Then refresh command lookup:
 
 ```bash
 hash -r
-kgtool --help
-kgtool completions
+kgnite --help
+kgnite completions
 ```
 
 ### Option B: Install without sudo into your own bin directory
@@ -156,8 +156,8 @@ kgtool completions
 If you prefer a user-only install:
 
 ```bash
-cd /Users/rajeshsingh/myprojects/kgtool
-KGTOOL_BIN_DIR="$HOME/.local/bin" bash scripts/install.sh
+cd /Users/rajeshsingh/myprojects/kgnite
+KGNITE_BIN_DIR="$HOME/.local/bin" bash scripts/install.sh
 ```
 
 Then make sure that directory is in your `PATH`.
@@ -167,8 +167,8 @@ For the current shell:
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 hash -r
-kgtool --help
-kgtool completions
+kgnite --help
+kgnite completions
 ```
 
 To make it permanent in `zsh`, add this to `~/.zshrc`:
@@ -189,7 +189,7 @@ hash -r
 Use this only if you are actively editing the project:
 
 ```bash
-cd /Users/rajeshsingh/myprojects/kgtool
+cd /Users/rajeshsingh/myprojects/kgnite
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
@@ -200,52 +200,52 @@ pip install -e .
 After installation:
 
 ```bash
-kgtool
-kgtool doctor
-kgtool usage
-kgtool completions
+kgnite
+kgnite doctor
+kgnite usage
+kgnite completions
 ```
 
 Behavior:
 
-- `kgtool` with no arguments prints help and common usage examples
+- `kgnite` with no arguments prints help and common usage examples
 - missing required arguments print command-specific examples
-- `kgtool doctor` shows Kaggle auth and runtime status
+- `kgnite doctor` shows Kaggle auth and runtime status
 
 ## 5. Built-in Help
 
 Top-level help:
 
 ```bash
-kgtool --help
-kgtool
+kgnite --help
+kgnite
 ```
 
 Examples-only help:
 
 ```bash
-kgtool usage
+kgnite usage
 ```
 
 Command help:
 
 ```bash
-kgtool search --help
-kgtool info --help
-kgtool download --help
-kgtool completions --help
-kgtool submit --help
-kgtool browse --help
+kgnite search --help
+kgnite info --help
+kgnite download --help
+kgnite completions --help
+kgnite submit --help
+kgnite browse --help
 ```
 
 ## 6. Shell Completion Workflow
 
-`kgtool` can now manage completions directly.
+`kgnite` can now manage completions directly.
 
 Run:
 
 ```bash
-kgtool completions
+kgnite completions
 ```
 
 What it does:
@@ -253,21 +253,21 @@ What it does:
 1. Detects your shell from `$SHELL`
 2. Generates the right completion file for `bash` or `zsh`
 3. Writes it to:
-   - `~/.local/share/kgtool/completions/kgtool.bash` for Bash
-   - `~/.local/share/kgtool/completions/_kgtool` for Zsh
+   - `~/.local/share/kgnite/completions/kgnite.bash` for Bash
+   - `~/.local/share/kgnite/completions/_kgnite` for Zsh
 4. Prints the exact command to refresh completions immediately
 5. Prints the exact config line(s) to add for persistence
 
 Examples:
 
 ```bash
-kgtool completions
-kgtool completions --shell zsh
-kgtool completions --shell bash
-kgtool completions --print
+kgnite completions
+kgnite completions --shell zsh
+kgnite completions --shell bash
+kgnite completions --print
 ```
 
-If you reinstall or update `kgtool`, run `kgtool completions` again to refresh the generated completion file.
+If you reinstall or update `kgnite`, run `kgnite completions` again to refresh the generated completion file.
 
 ## 7. Core Usage
 
@@ -283,11 +283,11 @@ Supported groups:
 Examples:
 
 ```bash
-kgtool search datasets "vision transformer" --sort-by votes
-kgtool search competitions llm --category playground --page-size 20
-kgtool search kernels rag --language python --kernel-type notebook
-kgtool search models gemma --owner google
-kgtool search datasets titanic --json
+kgnite search datasets "vision transformer" --sort-by votes
+kgnite search competitions llm --category playground --page-size 20
+kgnite search kernels rag --language python --kernel-type notebook
+kgnite search models gemma --owner google
+kgnite search datasets titanic --json
 ```
 
 ### Inspect metadata and info
@@ -302,22 +302,22 @@ Supported resource types:
 Examples:
 
 ```bash
-kgtool info dataset zillow/zecon
-kgtool info competition titanic
-kgtool info notebook kaggle/getting-started-with-ai4code
-kgtool info model google/gemma/pytorch/2b
-kgtool info model google/gemma/pytorch/2b/3
-kgtool info dataset heptapod/titanic --json
+kgnite info dataset zillow/zecon
+kgnite info competition titanic
+kgnite info notebook kaggle/getting-started-with-ai4code
+kgnite info model google/gemma/pytorch/2b
+kgnite info model google/gemma/pytorch/2b/3
+kgnite info dataset heptapod/titanic --json
 ```
 
 ### List files
 
 ```bash
-kgtool files dataset zillow/zecon
-kgtool files competition titanic
-kgtool files notebook kaggle/getting-started-with-ai4code
-kgtool files model google/gemma/pytorch/2b/3
-kgtool files competition titanic --json
+kgnite files dataset zillow/zecon
+kgnite files competition titanic
+kgnite files notebook kaggle/getting-started-with-ai4code
+kgnite files model google/gemma/pytorch/2b/3
+kgnite files competition titanic --json
 ```
 
 ### Download assets
@@ -332,11 +332,11 @@ Supported download targets:
 Examples:
 
 ```bash
-kgtool download dataset zillow/zecon --output-dir ./downloads
-kgtool download dataset zillow/zecon --path data.csv --output-dir ./downloads
-kgtool download competition titanic --output-dir ./downloads
-kgtool download model google/gemma/pytorch/2b/3 --output-dir ./models
-kgtool download notebook-output kaggle/getting-started-with-ai4code --output-dir ./nb-output
+kgnite download dataset zillow/zecon --output-dir ./downloads
+kgnite download dataset zillow/zecon --path data.csv --output-dir ./downloads
+kgnite download competition titanic --output-dir ./downloads
+kgnite download model google/gemma/pytorch/2b/3 --output-dir ./models
+kgnite download notebook-output kaggle/getting-started-with-ai4code --output-dir ./nb-output
 ```
 
 ### Pull notebook source
@@ -344,7 +344,7 @@ kgtool download notebook-output kaggle/getting-started-with-ai4code --output-dir
 Notebook source and notebook output are different operations.
 
 ```bash
-kgtool pull-notebook kaggle/getting-started-with-ai4code --output-dir ./notebooks
+kgnite pull-notebook kaggle/getting-started-with-ai4code --output-dir ./notebooks
 ```
 
 ## 8. Competition Workflows
@@ -352,13 +352,13 @@ kgtool pull-notebook kaggle/getting-started-with-ai4code --output-dir ./notebook
 ### Submit a file
 
 ```bash
-kgtool submit titanic --file ./submission.csv --message "baseline v1"
+kgnite submit titanic --file ./submission.csv --message "baseline v1"
 ```
 
 ### Submit a notebook version in a code competition
 
 ```bash
-kgtool submit some-code-competition \
+kgnite submit some-code-competition \
   --kernel yourname/your-notebook \
   --version 3 \
   --message "submit notebook version 3"
@@ -367,19 +367,19 @@ kgtool submit some-code-competition \
 ### View leaderboard
 
 ```bash
-kgtool leaderboard titanic --show
-kgtool leaderboard titanic --show --page-size 50
-kgtool leaderboard titanic --download --output-dir ./leaderboards
+kgnite leaderboard titanic --show
+kgnite leaderboard titanic --show --page-size 50
+kgnite leaderboard titanic --download --output-dir ./leaderboards
 ```
 
 ### View your submissions
 
 ```bash
-kgtool submissions titanic
-kgtool submissions titanic --json
+kgnite submissions titanic
+kgnite submissions titanic --json
 ```
 
-If Kaggle rejects submission-history access, `kgtool` now returns a clearer explanation instead of only a raw API error. Typical causes:
+If Kaggle rejects submission-history access, `kgnite` now returns a clearer explanation instead of only a raw API error. Typical causes:
 
 - you have not joined the competition yet
 - you have not accepted the competition rules
@@ -393,7 +393,7 @@ If Kaggle rejects submission-history access, `kgtool` now returns a clearer expl
 Handle-driven upload through `kagglehub`:
 
 ```bash
-kgtool upload-dataset ./my-dataset \
+kgnite upload-dataset ./my-dataset \
   --handle yourname/my-dataset \
   --message "initial upload"
 ```
@@ -401,8 +401,8 @@ kgtool upload-dataset ./my-dataset \
 Kaggle CLI metadata-folder upload:
 
 ```bash
-kgtool upload-dataset ./my-dataset --public
-kgtool upload-dataset ./my-dataset --version --message "new rows for march"
+kgnite upload-dataset ./my-dataset --public
+kgnite upload-dataset ./my-dataset --version --message "new rows for march"
 ```
 
 Notes:
@@ -415,7 +415,7 @@ Notes:
 Handle-driven upload through `kagglehub`:
 
 ```bash
-kgtool upload-model ./my-model \
+kgnite upload-model ./my-model \
   --handle yourname/my-model/pytorch/base \
   --license-name Apache-2.0 \
   --message "initial model version"
@@ -424,8 +424,8 @@ kgtool upload-model ./my-model \
 Kaggle CLI metadata-folder mode:
 
 ```bash
-kgtool upload-model ./my-model --action create
-kgtool upload-model ./my-model --action update
+kgnite upload-model ./my-model --action create
+kgnite upload-model ./my-model --action update
 ```
 
 Notes:
@@ -438,7 +438,7 @@ Notes:
 Run:
 
 ```bash
-kgtool browse
+kgnite browse
 ```
 
 What `browse` does:
@@ -464,7 +464,7 @@ Resource menu:
 Examples:
 
 ```text
-kgtool browse
+kgnite browse
 1
 titanic
 1
@@ -472,7 +472,7 @@ info
 ```
 
 ```text
-kgtool browse
+kgnite browse
 datasets
 titanic
 1
@@ -480,7 +480,7 @@ download
 ```
 
 ```text
-kgtool browse
+kgnite browse
 llm
 1
 info
@@ -488,7 +488,7 @@ info
 
 ### Browse download destination behavior
 
-When you choose a download action in `browse`, `kgtool` asks where to save the files.
+When you choose a download action in `browse`, `kgnite` asks where to save the files.
 
 Options:
 
@@ -503,7 +503,7 @@ Default base folders:
 - kernels: `~/.cache/kagglehub/notebooks`
 - models: `~/.cache/kagglehub/models`
 
-`kgtool` then creates a resource-specific subfolder under the chosen base path, so downloads do not collide with existing files.
+`kgnite` then creates a resource-specific subfolder under the chosen base path, so downloads do not collide with existing files.
 
 Examples:
 
@@ -523,7 +523,7 @@ Examples:
 If you changed the project code and want the installed tool updated:
 
 ```bash
-cd /Users/rajeshsingh/myprojects/kgtool
+cd /Users/rajeshsingh/myprojects/kgnite
 bash scripts/install.sh
 ```
 
@@ -532,13 +532,13 @@ If you use `/usr/local/bin`, rerun the printed `sudo install ...` command only i
 ### Check installed runtime
 
 ```bash
-kgtool doctor
+kgnite doctor
 ```
 
 ### Uninstall
 
 ```bash
-cd /Users/rajeshsingh/myprojects/kgtool
+cd /Users/rajeshsingh/myprojects/kgnite
 bash scripts/uninstall.sh
 ```
 

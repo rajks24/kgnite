@@ -4,11 +4,11 @@ SHELL := /bin/bash
 
 help:
 	@echo "Targets:"
-	@echo "  make install     Install kgtool using scripts/install.sh"
+	@echo "  make install     Install kgnite using scripts/install.sh"
 	@echo "  make reinstall   Re-run install"
-	@echo "  make uninstall   Remove installed kgtool"
+	@echo "  make uninstall   Remove installed kgnite"
 	@echo "  make dev         Create .venv and install editable package"
-	@echo "  make completions Run kgtool completions"
+	@echo "  make completions Run kgnite completions"
 
 install:
 	bash scripts/install.sh
@@ -24,4 +24,4 @@ dev:
 	. .venv/bin/activate && pip install -e .
 
 completions:
-	kgtool completions
+	kgnite completions

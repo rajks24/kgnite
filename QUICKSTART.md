@@ -14,28 +14,28 @@ Verify:
 kaggle config view
 ```
 
-## 2. Install kgtool
+## 2. Install kgnite
 
 System-style install:
 
 ```bash
-cd /Users/rajeshsingh/myprojects/kgtool
+cd /Users/rajeshsingh/myprojects/kgnite
 bash scripts/install.sh
-sudo install -m 755 "/Users/rajeshsingh/.local/share/kgtool/kgtool-launcher" "/usr/local/bin/kgtool"
+sudo install -m 755 "/Users/rajeshsingh/.local/share/kgnite/kgnite-launcher" "/usr/local/bin/kgnite"
 hash -r
 ```
 
 Then set up completions:
 
 ```bash
-kgtool completions
+kgnite completions
 ```
 
 User-local install without sudo:
 
 ```bash
-cd /Users/rajeshsingh/myprojects/kgtool
-KGTOOL_BIN_DIR="$HOME/.local/bin" bash scripts/install.sh
+cd /Users/rajeshsingh/myprojects/kgnite
+KGNITE_BIN_DIR="$HOME/.local/bin" bash scripts/install.sh
 export PATH="$HOME/.local/bin:$PATH"
 hash -r
 ```
@@ -43,27 +43,27 @@ hash -r
 Then set up completions:
 
 ```bash
-kgtool completions
+kgnite completions
 ```
 
 ## 3. Verify
 
 ```bash
-kgtool --help
-kgtool doctor
-kgtool usage
-kgtool completions
+kgnite --help
+kgnite doctor
+kgnite usage
+kgnite completions
 ```
 
 ## 4. Common commands
 
 ```bash
-kgtool search datasets titanic
-kgtool info dataset heptapod/titanic
-kgtool files competition titanic
-kgtool download dataset heptapod/titanic --output-dir ./downloads
-kgtool leaderboard titanic --show
-kgtool browse
+kgnite search datasets titanic
+kgnite info dataset heptapod/titanic
+kgnite files competition titanic
+kgnite download dataset heptapod/titanic --output-dir ./downloads
+kgnite leaderboard titanic --show
+kgnite browse
 ```
 
 ## 5. Browse tips
@@ -78,13 +78,13 @@ kgtool browse
 Reinstall after code changes:
 
 ```bash
-cd /Users/rajeshsingh/myprojects/kgtool
+cd /Users/rajeshsingh/myprojects/kgnite
 bash scripts/install.sh
 ```
 
 Uninstall:
 
 ```bash
-cd /Users/rajeshsingh/myprojects/kgtool
+cd /Users/rajeshsingh/myprojects/kgnite
 bash scripts/uninstall.sh
 ```

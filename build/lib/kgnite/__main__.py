@@ -1,4 +1,4 @@
-from kgtool.cli import main
+from kgnite.cli import main
 
 
 if __name__ == "__main__":

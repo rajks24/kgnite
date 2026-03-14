@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INSTALL_ROOT="${KGTOOL_INSTALL_ROOT:-$HOME/.local/share/kgtool}"
-BIN_DIR="${KGTOOL_BIN_DIR:-/usr/local/bin}"
-TARGET_BIN="$BIN_DIR/kgtool"
+INSTALL_ROOT="${KGNITE_INSTALL_ROOT:-$HOME/.local/share/kgnite}"
+BIN_DIR="${KGNITE_BIN_DIR:-/usr/local/bin}"
+TARGET_BIN="$BIN_DIR/kgnite"
 
-echo "Removing kgtool launcher and install files"
+echo "Removing kgnite launcher and install files"
 echo "  launcher: $TARGET_BIN"
 echo "  install root: $INSTALL_ROOT"
 echo
@@ -24,4 +24,4 @@ if [[ -d "$INSTALL_ROOT" ]]; then
   rm -rf "$INSTALL_ROOT"
 fi
 
-echo "kgtool uninstall complete."
+echo "kgnite uninstall complete."

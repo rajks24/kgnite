@@ -2,27 +2,27 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-INSTALL_ROOT="${KGTOOL_INSTALL_ROOT:-$HOME/.local/share/kgtool}"
-VENV_DIR="${KGTOOL_VENV_DIR:-$INSTALL_ROOT/venv}"
-BIN_DIR="${KGTOOL_BIN_DIR:-/usr/local/bin}"
-TARGET_BIN="$BIN_DIR/kgtool"
-LAUNCHER_PATH="$INSTALL_ROOT/kgtool-launcher"
+INSTALL_ROOT="${KGNITE_INSTALL_ROOT:-$HOME/.local/share/kgnite}"
+VENV_DIR="${KGNITE_VENV_DIR:-$INSTALL_ROOT/venv}"
+BIN_DIR="${KGNITE_BIN_DIR:-/usr/local/bin}"
+TARGET_BIN="$BIN_DIR/kgnite"
+LAUNCHER_PATH="$INSTALL_ROOT/kgnite-launcher"
 
 usage() {
   cat <<EOF
-Install kgtool as a utility command.
+Install kgnite as a utility command.
 
 Usage:
   bash scripts/install.sh
 
 Optional environment overrides:
-  KGTOOL_INSTALL_ROOT   Base installation directory (default: $HOME/.local/share/kgtool)
-  KGTOOL_VENV_DIR       Virtualenv directory (default: \$KGTOOL_INSTALL_ROOT/venv)
-  KGTOOL_BIN_DIR        Launcher directory (default: /usr/local/bin)
+  KGNITE_INSTALL_ROOT   Base installation directory (default: $HOME/.local/share/kgnite)
+  KGNITE_VENV_DIR       Virtualenv directory (default: \$KGNITE_INSTALL_ROOT/venv)
+  KGNITE_BIN_DIR        Launcher directory (default: /usr/local/bin)
 
 Examples:
   bash scripts/install.sh
-  KGTOOL_BIN_DIR="$HOME/.local/bin" bash scripts/install.sh
+  KGNITE_BIN_DIR="$HOME/.local/bin" bash scripts/install.sh
 EOF
 }
 
@@ -36,7 +36,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Installing kgtool"
+echo "Installing kgnite"
 echo "  source: $ROOT_DIR"
 echo "  install root: $INSTALL_ROOT"
 echo "  venv: $VENV_DIR"
@@ -51,7 +51,7 @@ python3 -m venv "$VENV_DIR"
 cat >"$LAUNCHER_PATH" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-exec "$VENV_DIR/bin/python" -m kgtool "\$@"
+exec "$VENV_DIR/bin/python" -m kgnite "\$@"
 EOF
 chmod +x "$LAUNCHER_PATH"
 
@@ -64,15 +64,15 @@ else
   echo "  sudo install -m 755 \"$LAUNCHER_PATH\" \"$TARGET_BIN\""
   echo
   echo "Or install to a user-writable bin directory:"
-  echo "  KGTOOL_BIN_DIR=\"\$HOME/.local/bin\" bash scripts/install.sh"
+  echo "  KGNITE_BIN_DIR=\"\$HOME/.local/bin\" bash scripts/install.sh"
   exit 1
 fi
 
 echo
-echo "kgtool installed successfully."
+echo "kgnite installed successfully."
 echo "Launcher: $TARGET_BIN"
 echo
 echo "Try:"
-echo "  kgtool --help"
-echo "  kgtool doctor"
-echo "  kgtool completions"
+echo "  kgnite --help"
+echo "  kgnite doctor"
+echo "  kgnite completions"

@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "kgtool"
+name = "kgnite"
 version = "0.1.0"
 description = "Unified Kaggle CLI helper built on top of kaggle and kagglehub"
 readme = "README.md"
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-kgtool = "kgtool.cli:main"
+kgnite = "kgnite.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
