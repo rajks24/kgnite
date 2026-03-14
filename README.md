@@ -9,10 +9,10 @@ It combines:
 
 Quick entry points:
 
-- [QUICKSTART.md](/Users/rajeshsingh/myprojects/kgnite/QUICKSTART.md)
-- [Makefile](/Users/rajeshsingh/myprojects/kgnite/Makefile)
-- [completions/kgnite.bash](/Users/rajeshsingh/myprojects/kgnite/completions/kgnite.bash)
-- [completions/_kgnite](/Users/rajeshsingh/myprojects/kgnite/completions/_kgnite)
+- [QUICKSTART.md](QUICKSTART.md)
+- [Makefile](Makefile)
+- [completions/kgnite.bash](completions/kgnite.bash)
+- [completions/_kgnite](completions/_kgnite)
 
 ## 1. Configure Kaggle First
 
