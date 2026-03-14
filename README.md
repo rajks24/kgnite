@@ -12,7 +12,7 @@ Quick entry points:
 - [QUICKSTART.md](QUICKSTART.md)
 - [Makefile](Makefile)
 - [completions/kgnite.bash](completions/kgnite.bash)
-- [completions/_kgnite](completions/_kgnite)
+- [completions/\_kgnite](completions/_kgnite)
 
 ## 1. Configure Kaggle First
 
@@ -193,6 +193,49 @@ cd /Users/rajeshsingh/myprojects/kgnite
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+```
+
+### Usage after any install
+
+```
+❯ kgnite
+usage: kgnite [-h] {usage,completions,doctor,search,info,files,download,pull-notebook,submit,leaderboard,submissions,upload-dataset,upload-model,browse} ...
+
+Unified Kaggle helper for search, metadata, files, downloads, and notebook pulls.
+
+positional arguments:
+  {usage,completions,doctor,search,info,files,download,pull-notebook,submit,leaderboard,submissions,upload-dataset,upload-model,browse}
+    usage               Show example workflows and common command patterns.
+    completions         Install or print shell completion setup.
+    doctor              Inspect local Kaggle/KaggleHub availability and authentication state.
+    search              Search Kaggle resources.
+    info                Show metadata and related information for a resource.
+    files               List files for a dataset, competition, notebook, or model version.
+    download            Download Kaggle assets using kagglehub.
+    pull-notebook       Pull notebook source files via the Kaggle CLI.
+    submit              Submit a file or notebook run to a Kaggle competition.
+    leaderboard         Show or download a competition leaderboard.
+    submissions         List your submissions for a competition.
+    upload-dataset      Upload or version a dataset. Use --handle for kagglehub upload, or rely on metadata files for kaggle CLI mode.
+    upload-model        Upload a model variation/version. Use --handle for kagglehub upload, or CLI metadata mode for create/update.
+    browse              Interactive terminal workflow for search -> inspect -> download.
+
+options:
+  -h, --help            show this help message and exit
+
+Common workflows:
+  kgnite doctor
+  kgnite completions
+  kgnite search datasets "vision transformer" --sort-by votes
+  kgnite info dataset zillow/zecon
+  kgnite files competition titanic
+  kgnite download dataset zillow/zecon --output-dir ./downloads
+  kgnite pull-notebook owner/notebook --output-dir ./notebooks
+  kgnite submit titanic --file ./submission.csv --message "baseline"
+  kgnite leaderboard titanic --show
+  kgnite upload-dataset ./my-dataset --handle me/my-dataset --message "v1"
+  kgnite upload-model ./my-model --handle me/model/pytorch/base --message "v1"
+  kgnite browse
 ```
 
 ## 4. First Run
