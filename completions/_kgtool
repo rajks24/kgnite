@@ -1,0 +1,138 @@
+#compdef kgtool
+
+local -a commands
+commands=(
+  'usage:Show example workflows'
+  'doctor:Inspect auth and runtime state'
+  'search:Search Kaggle resources'
+  'info:Show resource metadata'
+  'files:List resource files'
+  'download:Download Kaggle assets'
+  'pull-notebook:Pull notebook source'
+  'submit:Submit competition result'
+  'leaderboard:Show or download competition leaderboard'
+  'submissions:List competition submissions'
+  'upload-dataset:Upload or version a dataset'
+  'upload-model:Upload or update a model'
+  'browse:Interactive browse workflow'
+)
+
+local -a plural_resources singular_resources download_resources
+plural_resources=(datasets competitions kernels models)
+singular_resources=(dataset competition notebook model)
+download_resources=(dataset competition model notebook-output)
+
+case $CURRENT in
+  2)
+    _describe 'command' commands
+    return
+    ;;
+esac
+
+case "${words[2]}" in
+  search)
+    if (( CURRENT == 3 )); then
+      _values 'resource' $plural_resources
+      return
+    fi
+    _arguments \
+      '--sort-by[Sort order]' \
+      '--page[Page number]:page:' \
+      '--page-size[Page size]:page size:' \
+      '--owner[Model owner]:owner:' \
+      '--user[User]:user:' \
+      '--category[Competition category]:category:(all featured research recruitment gettingStarted masters playground)' \
+      '--group[Competition group]:group:(general entered inClass)' \
+      '--language[Kernel language]:language:(all python r sqlite julia)' \
+      '--kernel-type[Kernel type]:kernel type:(all script notebook)' \
+      '--output-type[Kernel output type]:output type:(all visualizations data)' \
+      '--dataset[Dataset filter]:dataset:' \
+      '--competition[Competition filter]:competition:' \
+      '--json[Print JSON]'
+    ;;
+  info)
+    if (( CURRENT == 3 )); then
+      _values 'resource' $singular_resources
+      return
+    fi
+    _arguments '--json[Print JSON]'
+    ;;
+  files)
+    if (( CURRENT == 3 )); then
+      _values 'resource' $singular_resources
+      return
+    fi
+    _arguments \
+      '--page-size[Page size]:page size:' \
+      '--page-token[Page token]:token:' \
+      '--json[Print JSON]'
+    ;;
+  download)
+    if (( CURRENT == 3 )); then
+      _values 'resource' $download_resources
+      return
+    fi
+    _arguments \
+      '--path[Path within remote resource]:path:' \
+      '--output-dir[Destination folder]:folder:_files -/' \
+      '--force[Force fresh download]' \
+      '--json[Print JSON]'
+    ;;
+  pull-notebook)
+    _arguments \
+      '--output-dir[Destination folder]:folder:_files -/' \
+      '--json[Print JSON]'
+    ;;
+  submit)
+    _arguments \
+      '--file[Submission file]:file:_files' \
+      '--kernel[Notebook handle]:kernel:' \
+      '--version[Notebook version]:version:' \
+      '--message[Submission message]:message:' \
+      '--json[Print JSON]'
+    ;;
+  leaderboard)
+    _arguments \
+      '--show[Show leaderboard in terminal]' \
+      '--download[Download leaderboard file]' \
+      '--output-dir[Destination folder]:folder:_files -/' \
+      '--page-size[Page size]:page size:' \
+      '--page-token[Page token]:token:' \
+      '--json[Print JSON]'
+    ;;
+  submissions)
+    _arguments '--json[Print JSON]'
+    ;;
+  upload-dataset)
+    _arguments \
+      '--handle[Dataset handle]:handle:' \
+      '--message[Version notes]:message:' \
+      '--ignore[Ignore patterns]:pattern:' \
+      '--version[Use dataset version command]' \
+      '--public[Create public dataset]' \
+      '--keep-tabular[Keep tabular files as-is]' \
+      '--dir-mode[Directory upload mode]:mode:(skip zip tar)' \
+      '--delete-old-versions[Delete old dataset versions]' \
+      '--json[Print JSON]'
+    ;;
+  upload-model)
+    _arguments \
+      '--handle[Model handle]:handle:' \
+      '--message[Version notes]:message:' \
+      '--license-name[License]:license:' \
+      '--ignore[Ignore patterns]:pattern:' \
+      '--sigstore[Enable sigstore signing]' \
+      '--action[CLI action]:action:(create update)' \
+      '--json[Print JSON]'
+    ;;
+  browse)
+    _arguments \
+      '--resource[Default resource]:resource:((datasets datasets competitions competitions kernels kernels models models))' \
+      '--search[Default search query]:query:' \
+      '--sort-by[Sort order]:sort:' \
+      '--page[Page number]:page:' \
+      '--page-size[Page size]:page size:' \
+      '--limit[Number of results to show]:limit:' \
+      '--output-dir[Default destination folder]:folder:_files -/'
+    ;;
+esac
