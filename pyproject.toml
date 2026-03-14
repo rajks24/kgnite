@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kgtool"
+version = "0.1.0"
+description = "Unified Kaggle CLI helper built on top of kaggle and kagglehub"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "kagglehub>=1.0.0",
+]
+
+[project.scripts]
+kgtool = "kgtool.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
