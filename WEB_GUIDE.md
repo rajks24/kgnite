@@ -109,11 +109,14 @@ Generate a standalone starter notebook for an existing competition directory:
 
 ```text
 Competition: titanic
+Participant: Your Name
 Data directory: ./titanic/data
 Output notebook: ./titanic/notebooks/starter.ipynb
+Include official competition notes: checked
+Notes pages: data-description, evaluation
 ```
 
-If a sample-submission CSV exists, its columns are included in the notebook guidance.
+The notebook identifies the participant and describes itself as a personal competition workspace. Official notes are fetched through Kaggle's competition-pages API, linked to their source, sanitized, and embedded as rendered Markdown/HTML. The default page is `data-description`; add `evaluation` or `rules` when useful. If a sample-submission CSV exists, its columns are included in the notebook guidance.
 
 ### Track performance
 

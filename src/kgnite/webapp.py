@@ -185,13 +185,13 @@ def page_html(token: str, cwd: Path) -> str:
 
   <section id="competition" class="tab"><div class="grid">
     <div class="card"><h2>Set up competition</h2><form data-action="setup">
-      <label>Competition slug<input name="competition" required placeholder="titanic"></label><label>Workspace directory<input name="directory" placeholder="./titanic"></label>
+      <label>Competition slug<input name="competition" required placeholder="titanic"></label><div class="row"><label>Workspace directory<input name="directory" placeholder="./titanic"></label><label>Participant name<input name="participant" placeholder="Your name"></label></div>
       <div class="row"><label>Metric<input name="metric" value="publicScore"></label><label class="check"><span><input type="checkbox" name="lower">Lower score is better</span></label></div>
-      <div class="row"><label class="check"><span><input type="checkbox" name="download">Download data</span></label><label class="check"><span><input type="checkbox" name="template" checked>Generate notebook</span></label></div>
+      <div class="row"><label class="check"><span><input type="checkbox" name="download">Download data</span></label><label class="check"><span><input type="checkbox" name="template" checked>Generate notebook</span></label></div><div class="row"><label class="check"><span><input type="checkbox" name="notes" checked>Include official competition notes</span></label><label>Notes pages, comma separated<input name="notesPages" value="data-description" placeholder="data-description, evaluation"></label></div>
       <label class="check"><span><input type="checkbox" name="force">Replace an existing generated workspace</span></label>
       <button class="primary">Create workspace</button></form></div>
     <div class="card"><h2>Generate notebook</h2><form data-action="template">
-      <label>Competition slug<input name="competition" required placeholder="titanic"></label><label>Data directory<input name="data" value="./data"></label><label>Output notebook<input name="output" placeholder="./notebooks/starter.ipynb"></label><label class="check"><span><input type="checkbox" name="force">Replace existing notebook</span></label>
+      <label>Competition slug<input name="competition" required placeholder="titanic"></label><div class="row"><label>Participant name<input name="participant" placeholder="Your name"></label><label>Data directory<input name="data" value="./data"></label></div><label>Output notebook<input name="output" placeholder="./notebooks/starter.ipynb"></label><div class="row"><label class="check"><span><input type="checkbox" name="notes" checked>Include official competition notes</span></label><label>Notes pages<input name="notesPages" value="data-description"></label></div><label class="check"><span><input type="checkbox" name="force">Replace existing notebook</span></label>
       <button class="primary">Generate notebook</button></form></div>
     <div class="card"><h2>Performance history</h2><form data-action="performance">
       <label>Competition slug<input name="competition" required placeholder="titanic"></label><label>History file<input name="history" placeholder=".kgnite/titanic-scores.json"></label>
@@ -249,8 +249,8 @@ function csv(value){{ return value.split(',').map(x=>x.trim()).filter(Boolean); 
 function build(action,f){{ let a=[]; const e=f.elements;
   if(action==='search'){{ a=['search',e.resource.value]; if(e.query.value)a.push(e.query.value); add(a,'--sort-by',e.sort.value); add(a,'--page',e.page.value); add(a,'--page-size',e.pageSize.value); add(a,'--owner',e.owner.value); add(a,'--user',e.user.value); add(a,'--category',e.category.value); add(a,'--group',e.group.value); add(a,'--language',e.language.value); add(a,'--kernel-type',e.kernelType.value); add(a,'--output-type',e.outputType.value); add(a,'--dataset',e.dataset.value); add(a,'--competition',e.competition.value); csv(e.tags.value).forEach(x=>add(a,'--tag',x)); csv(e.keywords.value).forEach(x=>add(a,'--keyword',x)); a.push('--json'); }}
   if(action==='trending'){{ a=['trending',e.resource.value,'--order',e.order.value,'--limit',e.limit.value]; add(a,'--search',e.query.value); add(a,'--category',e.category.value); csv(e.tags.value).forEach(x=>add(a,'--tag',x)); csv(e.keywords.value).forEach(x=>add(a,'--keyword',x)); a.push('--json'); }}
-  if(action==='setup'){{ a=['setup',e.competition.value,'--directory',e.directory.value||('./'+e.competition.value),'--metric',e.metric.value,e.lower.checked?'--lower-is-better':'--no-lower-is-better',e.download.checked?'--download':'--no-download',e.template.checked?'--template':'--no-template']; if(e.force.checked)a.push('--force'); a.push('--json'); }}
-  if(action==='template'){{ a=['template',e.competition.value,'--data-dir',e.data.value]; add(a,'--output',e.output.value); if(e.force.checked)a.push('--force'); a.push('--json'); }}
+  if(action==='setup'){{ a=['setup',e.competition.value,'--directory',e.directory.value||('./'+e.competition.value),'--metric',e.metric.value,e.lower.checked?'--lower-is-better':'--no-lower-is-better',e.download.checked?'--download':'--no-download',e.template.checked?'--template':'--no-template',e.notes.checked?'--competition-notes':'--no-competition-notes']; add(a,'--participant',e.participant.value); if(e.notes.checked)csv(e.notesPages.value).forEach(x=>add(a,'--notes-page',x)); if(e.force.checked)a.push('--force'); a.push('--json'); }}
+  if(action==='template'){{ a=['template',e.competition.value,'--data-dir',e.data.value,e.notes.checked?'--competition-notes':'--no-competition-notes']; add(a,'--participant',e.participant.value); add(a,'--output',e.output.value); if(e.notes.checked)csv(e.notesPages.value).forEach(x=>add(a,'--notes-page',x)); if(e.force.checked)a.push('--force'); a.push('--json'); }}
   if(action==='performance'){{ a=['performance',e.competition.value]; add(a,'--history',e.history.value); if(e.sync.checked)a.push('--sync'); if(e.lower.checked)a.push('--lower-is-better'); a.push('--json'); }}
   if(action==='submit'){{ a=['submit',e.competition.value]; add(a,'--file',e.file.value); add(a,'--kernel',e.kernel.value); add(a,'--version',e.version.value); a.push('--message',e.message.value,'--json'); }}
   if(action==='inspect'){{ a=[e.action.value,e.resource.value,e.handle.value]; if(e.action.value==='files'){{ add(a,'--page-size',e.pageSize.value); add(a,'--page-token',e.pageToken.value); }} a.push('--json'); }}
@@ -318,8 +318,11 @@ Metric: accuracy
 Download data: checked
 Generate notebook: checked</pre><p>This creates <code>.kgnite.json</code>, <code>data/</code>, <code>notebooks/</code>, and <code>submissions/</code>. Enable replacement only when overwriting generated files is intentional.</p>
 <h3>Generate a notebook</h3><pre>Competition: titanic
+Participant: Your Name
 Data directory: ./titanic/data
-Output: ./titanic/notebooks/starter.ipynb</pre>
+Output: ./titanic/notebooks/starter.ipynb
+Official notes: checked
+Notes pages: data-description, evaluation</pre><p>The notebook is presented as the participant's personal workspace. Official page content is fetched through Kaggle's API, linked to its source, sanitized, and embedded for reference.</p>
 <h3>Track scores</h3><pre>Competition: titanic
 History: ./titanic/scores.json
 Sync from Kaggle: checked</pre><p>Enable lower-is-better for loss or error metrics. Disable synchronization to view local history without contacting Kaggle.</p>

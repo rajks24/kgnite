@@ -53,10 +53,10 @@ _kgnite_completions() {
       COMPREPLY=( $(compgen -W "--sort-by --page --page-size --owner --user --category --group --language --kernel-type --output-type --dataset --competition --tag --keyword --json" -- "$cur") )
       ;;
     setup)
-      COMPREPLY=( $(compgen -W "--directory --metric --lower-is-better --no-lower-is-better --download --no-download --template --no-template --force --json" -- "$cur") )
+      COMPREPLY=( $(compgen -W "--directory --metric --participant --competition-notes --no-competition-notes --notes-page --lower-is-better --no-lower-is-better --download --no-download --template --no-template --force --json" -- "$cur") )
       ;;
     template)
-      COMPREPLY=( $(compgen -W "--output --data-dir --force --json" -- "$cur") )
+      COMPREPLY=( $(compgen -W "--output --data-dir --participant --competition-notes --no-competition-notes --notes-page --force --json" -- "$cur") )
       ;;
     performance)
       COMPREPLY=( $(compgen -W "--sync --history --lower-is-better --json" -- "$cur") )

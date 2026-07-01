@@ -323,10 +323,24 @@ Use `--lower-is-better` for loss/error metrics and `--no-lower-is-better` for ac
 ```bash
 kgnite template titanic \
   --data-dir ./titanic/data \
-  --output ./titanic/notebooks/starter.ipynb
+  --output ./titanic/notebooks/starter.ipynb \
+  --participant "Your Name" \
+  --notes-page data-description
 ```
 
-The generated notebook discovers train, test, and sample-submission CSV files. When a sample submission is already available, its columns are documented in the notebook. Use `--force` only when replacing an existing notebook is intentional.
+The notebook identifies the participant and describes itself as a personal competition workspace rather than advertising the generator. By default, it fetches and embeds the official Kaggle `data-description` page using the supported competition-pages API. The content includes a source link and is sanitized before being written to notebook Markdown.
+
+Add more official pages by repeating `--notes-page`:
+
+```bash
+kgnite template titanic \
+  --participant "Your Name" \
+  --notes-page data-description \
+  --notes-page evaluation \
+  --notes-page rules
+```
+
+Use `--no-competition-notes` when generating offline or when page content is not needed. The generated notebook also discovers train, test, and sample-submission CSV files. When a sample submission is available, its columns are documented. Use `--force` only when replacing an existing notebook is intentional.
 
 ### 3. Submit a result
 
@@ -542,6 +556,9 @@ kgnite template COMPETITION [--output PATH] [--data-dir PATH] [--force] [--json]
 |---|---|
 | `--output PATH` | Choose the notebook filename. |
 | `--data-dir PATH` | Point generated code at the competition data directory; defaults to `./data`. |
+| `--participant NAME` | Identify the participant in the notebook; defaults to `KGNITE_PARTICIPANT` or the workstation user. |
+| `--competition-notes` / `--no-competition-notes` | Include or omit official Kaggle competition-page notes. Notes are included by default. |
+| `--notes-page PAGE` | Select a page such as `data-description`, `evaluation`, or `rules`; repeat to include several. |
 | `--force` | Intentionally overwrite an existing notebook. |
 | `--json` | Return the generated path as JSON. |
 

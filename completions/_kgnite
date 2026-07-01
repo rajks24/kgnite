@@ -59,10 +59,10 @@ case "${words[2]}" in
       '--json[Print JSON]'
     ;;
   setup)
-    _arguments '--directory[Workspace]:folder:_files -/' '--metric[Metric]:metric:' '--lower-is-better' '--no-lower-is-better' '--download' '--no-download' '--template' '--no-template' '--force' '--json'
+    _arguments '--directory[Workspace]:folder:_files -/' '--metric[Metric]:metric:' '--participant[Participant name]:name:' '--competition-notes' '--no-competition-notes' '*--notes-page[Competition notes page]:page:' '--lower-is-better' '--no-lower-is-better' '--download' '--no-download' '--template' '--no-template' '--force' '--json'
     ;;
   template)
-    _arguments '--output[Notebook]:file:_files' '--data-dir[Data directory]:folder:_files -/' '--force' '--json'
+    _arguments '--output[Notebook]:file:_files' '--data-dir[Data directory]:folder:_files -/' '--participant[Participant name]:name:' '--competition-notes' '--no-competition-notes' '*--notes-page[Competition notes page]:page:' '--force' '--json'
     ;;
   performance)
     _arguments '--sync' '--history[History file]:file:_files' '--lower-is-better' '--json'

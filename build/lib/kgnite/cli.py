@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import getpass
 import io
 import json
 import logging
@@ -343,10 +344,10 @@ def bash_completion_script() -> str:
               COMPREPLY=( $(compgen -W "--sort-by --page --page-size --owner --user --category --group --language --kernel-type --output-type --dataset --competition --tag --keyword --json" -- "$cur") )
               ;;
             setup)
-              COMPREPLY=( $(compgen -W "--directory --metric --lower-is-better --no-lower-is-better --download --no-download --template --no-template --force --json" -- "$cur") )
+              COMPREPLY=( $(compgen -W "--directory --metric --participant --competition-notes --no-competition-notes --notes-page --lower-is-better --no-lower-is-better --download --no-download --template --no-template --force --json" -- "$cur") )
               ;;
             template)
-              COMPREPLY=( $(compgen -W "--output --data-dir --force --json" -- "$cur") )
+              COMPREPLY=( $(compgen -W "--output --data-dir --participant --competition-notes --no-competition-notes --notes-page --force --json" -- "$cur") )
               ;;
             performance)
               COMPREPLY=( $(compgen -W "--sync --history --lower-is-better --json" -- "$cur") )
@@ -471,10 +472,10 @@ def zsh_completion_script() -> str:
             _arguments '--sort-by[Sort order]' '--page[Page number]:page:' '--page-size[Page size]:page size:' '--owner[Owner]:owner:' '--user[User]:user:' '--category[Competition category]:category:(all featured research recruitment gettingStarted masters playground)' '--group[Competition group]:group:(general entered inClass)' '--language[Kernel language]:language:(all python r sqlite julia)' '--kernel-type[Kernel type]:type:(all script notebook)' '--output-type[Kernel output type]:type:(all visualizations data)' '--dataset[Dataset filter]:dataset:' '--competition[Competition filter]:competition:' '*--tag[Required tag]:tag:' '*--keyword[Required keyword]:keyword:' '--json[Print JSON]'
             ;;
           setup)
-            _arguments '--directory[Workspace]:folder:_files -/' '--metric[Metric]:metric:' '--lower-is-better' '--no-lower-is-better' '--download' '--no-download' '--template' '--no-template' '--force' '--json'
+            _arguments '--directory[Workspace]:folder:_files -/' '--metric[Metric]:metric:' '--participant[Participant name]:name:' '--competition-notes' '--no-competition-notes' '*--notes-page[Competition notes page]:page:' '--lower-is-better' '--no-lower-is-better' '--download' '--no-download' '--template' '--no-template' '--force' '--json'
             ;;
           template)
-            _arguments '--output[Notebook]:file:_files' '--data-dir[Data directory]:folder:_files -/' '--force' '--json'
+            _arguments '--output[Notebook]:file:_files' '--data-dir[Data directory]:folder:_files -/' '--participant[Participant name]:name:' '--competition-notes' '--no-competition-notes' '*--notes-page[Competition notes page]:page:' '--force' '--json'
             ;;
           performance)
             _arguments '--sync' '--history[History file]:file:_files' '--lower-is-better' '--json'
@@ -765,6 +766,43 @@ def command_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def fetch_competition_notes(competition: str, pages: list[str]) -> list[dict[str, str]]:
+    notes: list[dict[str, str]] = []
+    for page in pages:
+        result = run_kaggle(
+            [
+                "competitions",
+                "pages",
+                competition,
+                "--content",
+                "--page-name",
+                page,
+                "--format",
+                "json",
+            ]
+        )
+        try:
+            entries = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise KgniteError(
+                f"Kaggle returned invalid notes content for page `{page}`."
+            ) from exc
+        if not entries:
+            raise KgniteError(f"Competition page was not found: {page}")
+        entry = entries[0]
+        page_name = str(entry.get("name") or page)
+        if page_name.casefold() == "data-description":
+            url = f"https://www.kaggle.com/competitions/{competition}/data"
+        elif page_name.casefold() == "rules":
+            url = f"https://www.kaggle.com/competitions/{competition}/rules"
+        else:
+            url = f"https://www.kaggle.com/competitions/{competition}/overview/{page_name.casefold()}"
+        notes.append(
+            {"name": page_name, "content": str(entry.get("content") or ""), "url": url}
+        )
+    return notes
+
+
 def command_setup(args: argparse.Namespace) -> int:
     competition = args.competition or prompt("Competition slug")
     if not competition:
@@ -772,6 +810,9 @@ def command_setup(args: argparse.Namespace) -> int:
     directory = Path(args.directory or competition)
     metric = args.metric or (
         "publicScore" if args.json else prompt("Score metric", default="publicScore")
+    )
+    participant = (
+        args.participant or os.environ.get("KGNITE_PARTICIPANT") or getpass.getuser()
     )
     lower_is_better = args.lower_is_better
     if lower_is_better is None:
@@ -788,6 +829,7 @@ def command_setup(args: argparse.Namespace) -> int:
             directory,
             metric=metric,
             lower_is_better=lower_is_better,
+            participant=participant,
             force=args.force,
         )
     except FileExistsError as exc:
@@ -818,11 +860,20 @@ def command_setup(args: argparse.Namespace) -> int:
             != "n"
         )
     if should_template:
+        notes = (
+            fetch_competition_notes(
+                competition, args.notes_page or ["data-description"]
+            )
+            if args.competition_notes
+            else []
+        )
         try:
             notebook = write_starter_notebook(
                 competition,
                 directory / "notebooks" / "starter.ipynb",
                 directory / "data",
+                participant=participant,
+                competition_notes=notes,
                 force=args.force,
             )
         except FileExistsError as exc:
@@ -842,14 +893,31 @@ def command_setup(args: argparse.Namespace) -> int:
 
 def command_template(args: argparse.Namespace) -> int:
     output = Path(args.output or f"{args.competition}-starter.ipynb")
+    participant = (
+        args.participant or os.environ.get("KGNITE_PARTICIPANT") or getpass.getuser()
+    )
+    notes = (
+        fetch_competition_notes(
+            args.competition, args.notes_page or ["data-description"]
+        )
+        if args.competition_notes
+        else []
+    )
     try:
         written = write_starter_notebook(
-            args.competition, output, Path(args.data_dir), force=args.force
+            args.competition,
+            output,
+            Path(args.data_dir),
+            participant=participant,
+            competition_notes=notes,
+            force=args.force,
         )
     except FileExistsError as exc:
         raise KgniteError(str(exc)) from exc
     payload = {
         "competition": args.competition,
+        "participant": participant,
+        "notes_pages": [note["name"] for note in notes],
         "notebook": str(written),
         "data_dir": args.data_dir,
     }
@@ -1826,6 +1894,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--metric", help="Score metric name stored in the workspace configuration."
     )
     setup_parser.add_argument(
+        "--participant",
+        help="Participant name written into generated notebook metadata.",
+    )
+    setup_parser.add_argument(
+        "--competition-notes",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include official Kaggle competition notes in the generated notebook.",
+    )
+    setup_parser.add_argument(
+        "--notes-page",
+        action="append",
+        help="Competition page to include, such as data-description or evaluation. Repeatable.",
+    )
+    setup_parser.add_argument(
         "--lower-is-better", action=argparse.BooleanOptionalAction, default=None
     )
     setup_parser.add_argument(
@@ -1853,6 +1936,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--data-dir",
         default="./data",
         help="Competition data directory used by the notebook.",
+    )
+    template_parser.add_argument(
+        "--participant",
+        help="Participant name. Defaults to KGNITE_PARTICIPANT or the local user.",
+    )
+    template_parser.add_argument(
+        "--competition-notes",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include official Kaggle competition notes.",
+    )
+    template_parser.add_argument(
+        "--notes-page",
+        action="append",
+        help="Competition page to include. Repeatable; defaults to data-description.",
     )
     template_parser.add_argument(
         "--force", action="store_true", help="Overwrite an existing notebook."
