@@ -63,6 +63,11 @@ kgnite info dataset heptapod/titanic
 kgnite files competition titanic
 kgnite download dataset heptapod/titanic --output-dir ./downloads
 kgnite leaderboard titanic --show
+kgnite setup titanic --directory ./titanic
+kgnite template titanic --data-dir ./titanic/data --output ./titanic/notebooks/starter.ipynb
+kgnite performance titanic --sync
+kgnite trending datasets --tag tabular
+kgnite web
 kgnite browse
 ```
 

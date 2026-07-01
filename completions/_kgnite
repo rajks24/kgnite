@@ -5,9 +5,15 @@ commands=(
   'usage:Show example workflows'
   'doctor:Inspect auth and runtime state'
   'search:Search Kaggle resources'
+  'setup:Create a competition workspace'
+  'template:Generate a starter notebook'
+  'performance:Track submission scores'
+  'trending:Show popular or new resources'
+  'web:Launch the local browser app'
   'info:Show resource metadata'
   'files:List resource files'
   'download:Download Kaggle assets'
+  'preview:Preview rows from a dataset file'
   'pull-notebook:Pull notebook source'
   'submit:Submit competition result'
   'leaderboard:Show or download competition leaderboard'
@@ -48,7 +54,24 @@ case "${words[2]}" in
       '--output-type[Kernel output type]:output type:(all visualizations data)' \
       '--dataset[Dataset filter]:dataset:' \
       '--competition[Competition filter]:competition:' \
+      '*--tag[Required tag]:tag:' \
+      '*--keyword[Required keyword]:keyword:' \
       '--json[Print JSON]'
+    ;;
+  setup)
+    _arguments '--directory[Workspace]:folder:_files -/' '--metric[Metric]:metric:' '--lower-is-better' '--no-lower-is-better' '--download' '--no-download' '--template' '--no-template' '--force' '--json'
+    ;;
+  template)
+    _arguments '--output[Notebook]:file:_files' '--data-dir[Data directory]:folder:_files -/' '--force' '--json'
+    ;;
+  performance)
+    _arguments '--sync' '--history[History file]:file:_files' '--lower-is-better' '--json'
+    ;;
+  trending)
+    _arguments '--order[Order]:order:(popular new)' '--search[Query]:query:' '*--tag[Required tag]:tag:' '*--keyword[Required keyword]:keyword:' '--category[Category]:category:' '--limit[Limit]:limit:' '--json'
+    ;;
+  web)
+    _arguments '--port[Local port]:port:' '--browser[Open browser]' '--no-browser[Print URL only]' '--heartbeat-timeout[Page heartbeat timeout]:seconds:' '--command-timeout[Command timeout]:seconds:'
     ;;
   info)
     if (( CURRENT == 3 )); then
@@ -77,6 +100,9 @@ case "${words[2]}" in
       '--output-dir[Destination folder]:folder:_files -/' \
       '--force[Force fresh download]' \
       '--json[Print JSON]'
+    ;;
+  preview)
+    _arguments '--path[Remote file]:path:' '--rows[Row limit]:rows:' '--columns[Column limit]:columns:' '--max-file-size-mb[Maximum file size]:megabytes:' '--force[Refresh cached file]' '--json[Print JSON]'
     ;;
   pull-notebook)
     _arguments \

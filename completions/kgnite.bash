@@ -2,7 +2,7 @@ _kgnite_completions() {
   local cur prev words cword
   _init_completion || return
 
-  local commands="usage doctor search info files download pull-notebook submit leaderboard submissions upload-dataset upload-model browse"
+  local commands="usage doctor completions search setup template performance trending web info files download preview pull-notebook submit leaderboard submissions upload-dataset upload-model browse"
   local resources_plural="datasets competitions kernels models"
   local resources_singular="dataset competition notebook model"
   local download_resources="dataset competition model notebook-output"
@@ -50,7 +50,22 @@ _kgnite_completions() {
           return
           ;;
       esac
-      COMPREPLY=( $(compgen -W "--sort-by --page --page-size --owner --user --category --group --language --kernel-type --output-type --dataset --competition --json" -- "$cur") )
+      COMPREPLY=( $(compgen -W "--sort-by --page --page-size --owner --user --category --group --language --kernel-type --output-type --dataset --competition --tag --keyword --json" -- "$cur") )
+      ;;
+    setup)
+      COMPREPLY=( $(compgen -W "--directory --metric --lower-is-better --no-lower-is-better --download --no-download --template --no-template --force --json" -- "$cur") )
+      ;;
+    template)
+      COMPREPLY=( $(compgen -W "--output --data-dir --force --json" -- "$cur") )
+      ;;
+    performance)
+      COMPREPLY=( $(compgen -W "--sync --history --lower-is-better --json" -- "$cur") )
+      ;;
+    trending)
+      COMPREPLY=( $(compgen -W "datasets competitions kernels models --order --search --tag --keyword --category --limit --json" -- "$cur") )
+      ;;
+    web)
+      COMPREPLY=( $(compgen -W "--port --browser --no-browser --heartbeat-timeout --command-timeout" -- "$cur") )
       ;;
     info)
       if [[ $cword -eq 2 ]]; then
@@ -72,6 +87,9 @@ _kgnite_completions() {
         return
       fi
       COMPREPLY=( $(compgen -W "--path --output-dir --force --json" -- "$cur") )
+      ;;
+    preview)
+      COMPREPLY=( $(compgen -W "dataset local url --path --rows --columns --max-file-size-mb --force --json" -- "$cur") )
       ;;
     pull-notebook)
       COMPREPLY=( $(compgen -W "--output-dir --json" -- "$cur") )

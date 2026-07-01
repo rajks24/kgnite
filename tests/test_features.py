@@ -1,0 +1,114 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from kgnite.features import (
+    choose_preview_file,
+    create_competition_workspace,
+    filter_resource_rows,
+    merge_score_history,
+    normalize_scores,
+    preview_local_file,
+    score_sparkline,
+    write_starter_notebook,
+)
+
+
+class FilteringTests(unittest.TestCase):
+    def test_tags_and_keywords_match_across_columns(self):
+        rows = [
+            {"title": "House Prices", "tags": "tabular regression", "owner": "alice"},
+            {"title": "Cat Images", "tags": "vision", "owner": "bob"},
+        ]
+        self.assertEqual(
+            filter_resource_rows(rows, tags=["tabular"], keywords=["house"]),
+            [rows[0]],
+        )
+
+    def test_all_filters_are_required(self):
+        rows = [{"title": "NLP", "tags": "text"}]
+        self.assertEqual(filter_resource_rows(rows, tags=["text", "audio"]), [])
+
+
+class PreviewTests(unittest.TestCase):
+    def test_preview_selects_small_non_sample_tabular_file(self):
+        files = [
+            {"name": "sample_submission.csv", "size": "20"},
+            {"name": "employees.csv", "size": "100"},
+            {"name": "archive.zip", "size": "10"},
+        ]
+        self.assertEqual(
+            choose_preview_file(files, max_bytes=1000),
+            ("employees.csv", 100),
+        )
+
+    def test_preview_rejects_large_or_unsupported_file(self):
+        with self.assertRaisesRegex(ValueError, "above the preview limit"):
+            choose_preview_file([{"name": "large.csv", "size": "2000"}], max_bytes=100)
+        with self.assertRaisesRegex(ValueError, "cannot be previewed"):
+            choose_preview_file(
+                [{"name": "data.parquet", "size": "20"}], "data.parquet", max_bytes=100
+            )
+
+    def test_csv_preview_limits_rows_and_columns(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "employees.csv"
+            path.write_text("name,team,age\nAda,ML,36\nLin,Data,40\n")
+            preview = preview_local_file(path, row_limit=1, column_limit=2)
+        self.assertEqual(preview["rows"], [{"name": "Ada", "team": "ML"}])
+        self.assertEqual(preview["shape"], {"rows": 2, "columns": 3})
+        self.assertEqual(preview["columns"], ["name", "team", "age"])
+
+    def test_csv_preview_can_show_all_columns(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "employees.csv"
+            path.write_text("name,team,age\nAda,ML,36\n")
+            preview = preview_local_file(path, row_limit=10, column_limit=None)
+        self.assertEqual(preview["displayed_columns"], 3)
+        self.assertEqual(preview["rows"][0], {"name": "Ada", "team": "ML", "age": "36"})
+
+
+class WorkspaceTests(unittest.TestCase):
+    def test_workspace_and_notebook_are_created(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "titanic"
+            payload = create_competition_workspace("titanic", root)
+            self.assertEqual(payload["competition"], "titanic")
+            self.assertTrue((root / ".kgnite.json").exists())
+            self.assertTrue((root / "submissions").is_dir())
+
+            (root / "data" / "sample_submission.csv").write_text(
+                "PassengerId,Survived\n1,0\n"
+            )
+            notebook_path = write_starter_notebook(
+                "titanic", root / "notebooks" / "starter.ipynb", root / "data"
+            )
+            notebook = json.loads(notebook_path.read_text())
+            self.assertEqual(notebook["nbformat"], 4)
+            self.assertIn(
+                "PassengerId, Survived", "".join(notebook["cells"][2]["source"])
+            )
+
+    def test_workspace_does_not_overwrite_without_force(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            create_competition_workspace("demo", root)
+            with self.assertRaises(FileExistsError):
+                create_competition_workspace("demo", root)
+
+
+class PerformanceTests(unittest.TestCase):
+    def test_scores_are_normalized_merged_and_visualized(self):
+        raw = [
+            {"date": "2026-01-01", "publicScore": "0.71", "description": "baseline"},
+            {"date": "2026-01-02", "publicScore": "0.82", "description": "features"},
+        ]
+        scores = normalize_scores(raw, "demo")
+        self.assertEqual([row["score"] for row in scores], [0.71, 0.82])
+        self.assertEqual(len(merge_score_history(scores, scores)), 2)
+        self.assertEqual(score_sparkline([0.71, 0.82]), "▁█")
+
+
+if __name__ == "__main__":
+    unittest.main()

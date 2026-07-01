@@ -1,24 +1,53 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
+import io
 import json
+import logging
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
-import kagglehub
-from kagglehub.config import get_kaggle_credentials
-from kagglehub.handle import (
-    parse_competition_handle,
-    parse_dataset_handle,
-    parse_model_handle,
-    parse_notebook_handle,
+try:
+    import kagglehub
+    from kagglehub.config import get_kaggle_credentials
+    from kagglehub.handle import (
+        parse_competition_handle,
+        parse_dataset_handle,
+        parse_model_handle,
+        parse_notebook_handle,
+    )
+
+    KAGGLEHUB_IMPORT_ERROR: Exception | None = None
+except (ImportError, ModuleNotFoundError) as exc:
+    kagglehub = None  # type: ignore[assignment]
+    get_kaggle_credentials = None  # type: ignore[assignment]
+    parse_competition_handle = None  # type: ignore[assignment]
+    parse_dataset_handle = None  # type: ignore[assignment]
+    parse_model_handle = None  # type: ignore[assignment]
+    parse_notebook_handle = None  # type: ignore[assignment]
+    KAGGLEHUB_IMPORT_ERROR = exc
+
+from kgnite.features import (
+    choose_preview_file,
+    create_competition_workspace,
+    filter_resource_rows,
+    load_score_history,
+    merge_score_history,
+    normalize_scores,
+    preview_local_file,
+    save_score_history,
+    score_sparkline,
+    write_starter_notebook,
 )
 
 APP_NAME = "kgnite"
@@ -30,9 +59,15 @@ Common workflows:
   kgnite info dataset zillow/zecon
   kgnite files competition titanic
   kgnite download dataset zillow/zecon --output-dir ./downloads
+  kgnite preview dataset zillow/zecon --rows 10
   kgnite pull-notebook owner/notebook --output-dir ./notebooks
   kgnite submit titanic --file ./submission.csv --message "baseline"
   kgnite leaderboard titanic --show
+  kgnite setup titanic --directory ./titanic
+  kgnite template titanic --output ./titanic/notebooks/starter.ipynb
+  kgnite performance titanic --sync
+  kgnite trending datasets --tag tabular
+  kgnite web
   kgnite upload-dataset ./my-dataset --handle me/my-dataset --message "v1"
   kgnite upload-model ./my-model --handle me/model/pytorch/base --message "v1"
   kgnite browse
@@ -53,11 +88,11 @@ COMMAND_HINTS = {
         "kgnite submissions titanic --json",
     ],
     "kgnite upload-dataset": [
-        "kgnite upload-dataset ./my-dataset --handle yourname/my-dataset --message \"v1\"",
-        "kgnite upload-dataset ./my-dataset --version --message \"march refresh\"",
+        'kgnite upload-dataset ./my-dataset --handle yourname/my-dataset --message "v1"',
+        'kgnite upload-dataset ./my-dataset --version --message "march refresh"',
     ],
     "kgnite upload-model": [
-        "kgnite upload-model ./my-model --handle yourname/my-model/pytorch/base --message \"v1\"",
+        'kgnite upload-model ./my-model --handle yourname/my-model/pytorch/base --message "v1"',
         "kgnite upload-model ./my-model --action create",
     ],
     "kgnite browse": [
@@ -70,11 +105,25 @@ COMMAND_HINTS = {
         "kgnite completions --shell zsh",
         "kgnite completions --print",
     ],
+    "kgnite web": [
+        "kgnite web",
+        "kgnite web --port 8765",
+        "kgnite web --no-browser",
+    ],
 }
 
 
 class KgniteError(RuntimeError):
     pass
+
+
+def require_kagglehub() -> Any:
+    if kagglehub is None:
+        raise KgniteError(
+            "kagglehub could not be imported. Reinstall kgnite dependencies. "
+            f"Upstream import error: {KAGGLEHUB_IMPORT_ERROR}"
+        )
+    return kagglehub
 
 
 class KgniteArgumentParser(argparse.ArgumentParser):
@@ -93,7 +142,9 @@ class KgniteArgumentParser(argparse.ArgumentParser):
         raise SystemExit(2)
 
 
-def run_kaggle(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+def run_kaggle(
+    args: list[str], *, check: bool = True
+) -> subprocess.CompletedProcess[str]:
     command = ["kaggle", *args]
     try:
         return subprocess.run(
@@ -140,7 +191,10 @@ def print_table(rows: list[dict[str, Any]]) -> None:
     widths: dict[str, int] = {header: len(header) for header in headers}
     str_rows: list[dict[str, str]] = []
     for row in rows:
-        string_row = {header: "" if row.get(header) is None else str(row.get(header)) for header in headers}
+        string_row = {
+            header: "" if row.get(header) is None else str(row.get(header))
+            for header in headers
+        }
         str_rows.append(string_row)
         for header, value in string_row.items():
             widths[header] = max(widths[header], len(value))
@@ -222,13 +276,17 @@ def choose_download_destination(resource: str) -> str:
     if choice == "3":
         custom_dir = prompt("Custom folder path")
         if not custom_dir:
-            print(f"No custom folder entered. Using default cache folder: {default_dir}")
+            print(
+                f"No custom folder entered. Using default cache folder: {default_dir}"
+            )
             return default_dir
         return str(Path(custom_dir).expanduser().resolve())
 
     normalized = try_normalize_resource(choice)
     if normalized:
-        print(f"Input `{choice}` looks like a resource, not a folder choice. Using default cache folder: {default_dir}")
+        print(
+            f"Input `{choice}` looks like a resource, not a folder choice. Using default cache folder: {default_dir}"
+        )
         return default_dir
 
     return str(Path(choice).expanduser().resolve())
@@ -262,7 +320,7 @@ def bash_completion_script() -> str:
           local cur prev words cword
           _init_completion || return
 
-          local commands="usage doctor completions search info files download pull-notebook submit leaderboard submissions upload-dataset upload-model browse"
+          local commands="usage doctor completions search setup template performance trending web info files download preview pull-notebook submit leaderboard submissions upload-dataset upload-model browse"
           local resources_plural="datasets competitions kernels models"
           local resources_singular="dataset competition notebook model"
           local download_resources="dataset competition model notebook-output"
@@ -282,7 +340,22 @@ def bash_completion_script() -> str:
                 COMPREPLY=( $(compgen -W "$resources_plural" -- "$cur") )
                 return
               fi
-              COMPREPLY=( $(compgen -W "--sort-by --page --page-size --owner --user --category --group --language --kernel-type --output-type --dataset --competition --json" -- "$cur") )
+              COMPREPLY=( $(compgen -W "--sort-by --page --page-size --owner --user --category --group --language --kernel-type --output-type --dataset --competition --tag --keyword --json" -- "$cur") )
+              ;;
+            setup)
+              COMPREPLY=( $(compgen -W "--directory --metric --lower-is-better --no-lower-is-better --download --no-download --template --no-template --force --json" -- "$cur") )
+              ;;
+            template)
+              COMPREPLY=( $(compgen -W "--output --data-dir --force --json" -- "$cur") )
+              ;;
+            performance)
+              COMPREPLY=( $(compgen -W "--sync --history --lower-is-better --json" -- "$cur") )
+              ;;
+            trending)
+              COMPREPLY=( $(compgen -W "datasets competitions kernels models --order --search --tag --keyword --category --limit --json" -- "$cur") )
+              ;;
+            web)
+              COMPREPLY=( $(compgen -W "--port --browser --no-browser --heartbeat-timeout --command-timeout" -- "$cur") )
               ;;
             info)
               if [[ $cword -eq 2 ]]; then
@@ -304,6 +377,9 @@ def bash_completion_script() -> str:
                 return
               fi
               COMPREPLY=( $(compgen -W "--path --output-dir --force --json" -- "$cur") )
+              ;;
+            preview)
+              COMPREPLY=( $(compgen -W "dataset local url --path --rows --columns --max-file-size-mb --force --json" -- "$cur") )
               ;;
             pull-notebook)
               COMPREPLY=( $(compgen -W "--output-dir --json" -- "$cur") )
@@ -353,9 +429,15 @@ def zsh_completion_script() -> str:
           'doctor:Inspect auth and runtime state'
           'completions:Install or print shell completions'
           'search:Search Kaggle resources'
+          'setup:Create a competition workspace'
+          'template:Generate a starter notebook'
+          'performance:Track submission scores'
+          'trending:Show popular or new resources'
+          'web:Launch the local browser app'
           'info:Show resource metadata'
           'files:List resource files'
           'download:Download Kaggle assets'
+          'preview:Preview rows from a dataset file'
           'pull-notebook:Pull notebook source'
           'submit:Submit competition result'
           'leaderboard:Show or download competition leaderboard'
@@ -386,7 +468,22 @@ def zsh_completion_script() -> str:
               _values 'resource' $plural_resources
               return
             fi
-            _arguments '--sort-by[Sort order]' '--page[Page number]:page:' '--page-size[Page size]:page size:' '--owner[Owner]:owner:' '--user[User]:user:' '--category[Competition category]:category:(all featured research recruitment gettingStarted masters playground)' '--group[Competition group]:group:(general entered inClass)' '--language[Kernel language]:language:(all python r sqlite julia)' '--kernel-type[Kernel type]:type:(all script notebook)' '--output-type[Kernel output type]:type:(all visualizations data)' '--dataset[Dataset filter]:dataset:' '--competition[Competition filter]:competition:' '--json[Print JSON]'
+            _arguments '--sort-by[Sort order]' '--page[Page number]:page:' '--page-size[Page size]:page size:' '--owner[Owner]:owner:' '--user[User]:user:' '--category[Competition category]:category:(all featured research recruitment gettingStarted masters playground)' '--group[Competition group]:group:(general entered inClass)' '--language[Kernel language]:language:(all python r sqlite julia)' '--kernel-type[Kernel type]:type:(all script notebook)' '--output-type[Kernel output type]:type:(all visualizations data)' '--dataset[Dataset filter]:dataset:' '--competition[Competition filter]:competition:' '*--tag[Required tag]:tag:' '*--keyword[Required keyword]:keyword:' '--json[Print JSON]'
+            ;;
+          setup)
+            _arguments '--directory[Workspace]:folder:_files -/' '--metric[Metric]:metric:' '--lower-is-better' '--no-lower-is-better' '--download' '--no-download' '--template' '--no-template' '--force' '--json'
+            ;;
+          template)
+            _arguments '--output[Notebook]:file:_files' '--data-dir[Data directory]:folder:_files -/' '--force' '--json'
+            ;;
+          performance)
+            _arguments '--sync' '--history[History file]:file:_files' '--lower-is-better' '--json'
+            ;;
+          trending)
+            _arguments '--order[Order]:order:(popular new)' '--search[Query]:query:' '*--tag[Required tag]:tag:' '*--keyword[Required keyword]:keyword:' '--category[Category]:category:' '--limit[Limit]:limit:' '--json'
+            ;;
+          web)
+            _arguments '--port[Local port]:port:' '--browser[Open browser]' '--no-browser[Print URL only]' '--heartbeat-timeout[Page heartbeat timeout]:seconds:' '--command-timeout[Command timeout]:seconds:'
             ;;
           info)
             if (( CURRENT == 3 )); then
@@ -408,6 +505,9 @@ def zsh_completion_script() -> str:
               return
             fi
             _arguments '--path[Remote path]:path:' '--output-dir[Destination]:folder:_files -/' '--force[Force fresh download]' '--json[Print JSON]'
+            ;;
+          preview)
+            _arguments '--path[Remote file]:path:' '--rows[Row limit]:rows:' '--columns[Column limit]:columns:' '--max-file-size-mb[Maximum file size]:megabytes:' '--force[Refresh cached file]' '--json[Print JSON]'
             ;;
           pull-notebook)
             _arguments '--output-dir[Destination]:folder:_files -/' '--json[Print JSON]'
@@ -480,7 +580,32 @@ def try_normalize_resource(resource: str | None) -> str | None:
     return mapping.get(resource.lower())
 
 
+def validate_resource_handle(resource: str, handle: str) -> None:
+    normalized = normalize_resource(resource)
+    parts = [part for part in handle.strip().split("/") if part]
+    if normalized == "datasets" and len(parts) < 2:
+        raise KgniteError(
+            "Dataset handle must be `owner/dataset-slug`, not a search query. "
+            f"Run `kgnite search datasets {handle}` and use a result's `ref` value."
+        )
+    if normalized == "kernels" and len(parts) < 2:
+        raise KgniteError(
+            "Notebook handle must be `owner/notebook-slug`. "
+            f"Run `kgnite search kernels {handle}` and use a result's `ref` value."
+        )
+    if normalized == "models" and len(parts) < 2:
+        raise KgniteError(
+            "Model handle must begin with `owner/model`. "
+            f"Run `kgnite search models {handle}` and use a result's `ref` value."
+        )
+
+
 def handle_url(resource: str, handle: str) -> str:
+    require_kagglehub()
+    assert parse_dataset_handle is not None
+    assert parse_competition_handle is not None
+    assert parse_notebook_handle is not None
+    assert parse_model_handle is not None
     if resource == "datasets":
         parsed = parse_dataset_handle(handle)
         url = f"https://www.kaggle.com/datasets/{parsed.owner}/{parsed.dataset}"
@@ -513,7 +638,7 @@ def handle_url(resource: str, handle: str) -> str:
 def auth_summary() -> dict[str, Any]:
     config_dir = Path(os.environ.get("KAGGLE_CONFIG_DIR", Path.home() / ".kaggle"))
     kaggle_json = config_dir / "kaggle.json"
-    credentials = get_kaggle_credentials()
+    credentials = get_kaggle_credentials() if get_kaggle_credentials else None
     api_token = os.environ.get("KAGGLE_API_TOKEN")
     kaggle_key = os.environ.get("KAGGLE_KEY")
     kaggle_username = os.environ.get("KAGGLE_USERNAME")
@@ -521,7 +646,9 @@ def auth_summary() -> dict[str, Any]:
     auth_method = None
     config_view_error = None
     try:
-        config_view = run_kaggle(["config", "view"], check=True).stdout.strip().splitlines()
+        config_view = (
+            run_kaggle(["config", "view"], check=True).stdout.strip().splitlines()
+        )
         for line in config_view:
             stripped = line.strip()
             if stripped.startswith("- auth_method:"):
@@ -531,7 +658,10 @@ def auth_summary() -> dict[str, Any]:
 
     return {
         "kaggle_cli_on_path": shutil.which("kaggle") is not None,
-        "kagglehub_version": getattr(kagglehub, "__version__", "unknown"),
+        "kagglehub_version": getattr(kagglehub, "__version__", "unavailable"),
+        "kagglehub_import_error": (
+            str(KAGGLEHUB_IMPORT_ERROR) if KAGGLEHUB_IMPORT_ERROR else None
+        ),
         "kaggle_api_token_env": bool(api_token),
         "legacy_env_credentials": bool(kaggle_key and kaggle_username),
         "kaggle_json_exists": kaggle_json.exists(),
@@ -541,7 +671,9 @@ def auth_summary() -> dict[str, Any]:
             "access_token"
             if credentials and getattr(credentials, "api_key", None)
             else "username_key"
-            if credentials and getattr(credentials, "username", None) and getattr(credentials, "key", None)
+            if credentials
+            and getattr(credentials, "username", None)
+            and getattr(credentials, "key", None)
             else "missing"
         ),
         "kaggle_cli_auth_method": auth_method,
@@ -557,9 +689,17 @@ def search_rows(args: argparse.Namespace) -> list[dict[str, str]]:
         command += ["--search", args.search]
     if getattr(args, "sort_by", None):
         command += ["--sort-by", args.sort_by]
-    if getattr(args, "page", None) is not None and resource in {"datasets", "competitions", "kernels"}:
+    if getattr(args, "page", None) is not None and resource in {
+        "datasets",
+        "competitions",
+        "kernels",
+    }:
         command += ["--page", str(args.page)]
-    if getattr(args, "page_size", None) is not None and resource in {"competitions", "kernels", "models"}:
+    if getattr(args, "page_size", None) is not None and resource in {
+        "competitions",
+        "kernels",
+        "models",
+    }:
         command += ["--page-size", str(args.page_size)]
     if getattr(args, "owner", None) and resource == "models":
         command += ["--owner", args.owner]
@@ -581,11 +721,17 @@ def search_rows(args: argparse.Namespace) -> list[dict[str, str]]:
         command += ["--competition", args.competition]
 
     result = run_kaggle(command)
-    return parse_csv_output(result.stdout)
+    return filter_resource_rows(
+        parse_csv_output(result.stdout),
+        tags=getattr(args, "tag", None) or (),
+        keywords=getattr(args, "keyword", None) or (),
+    )
 
 
 def add_common_output_flags(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--json", action="store_true", help="Print JSON instead of a table.")
+    parser.add_argument(
+        "--json", action="store_true", help="Print JSON instead of a table."
+    )
 
 
 def command_doctor(args: argparse.Namespace) -> int:
@@ -598,11 +744,15 @@ def command_doctor(args: argparse.Namespace) -> int:
     print_table(rows)
     print()
     if summary["detected_auth_mode"] == "access_token":
-        print("Recommendation: keep using KAGGLE_API_TOKEN. It is already detected by kagglehub.")
+        print(
+            "Recommendation: keep using KAGGLE_API_TOKEN. It is already detected by kagglehub."
+        )
     elif summary["detected_auth_mode"] == "username_key":
         print("Recommendation: current setup uses legacy username/key credentials.")
     else:
-        print("Recommendation: no Kaggle credentials detected. Configure them before downloading.")
+        print(
+            "Recommendation: no Kaggle credentials detected. Configure them before downloading."
+        )
     return 0
 
 
@@ -615,7 +765,196 @@ def command_search(args: argparse.Namespace) -> int:
     return 0
 
 
-def list_files(resource: str, handle: str, *, page_size: int | None = None, page_token: str | None = None) -> list[dict[str, str]]:
+def command_setup(args: argparse.Namespace) -> int:
+    competition = args.competition or prompt("Competition slug")
+    if not competition:
+        raise KgniteError("A competition slug is required.")
+    directory = Path(args.directory or competition)
+    metric = args.metric or (
+        "publicScore" if args.json else prompt("Score metric", default="publicScore")
+    )
+    lower_is_better = args.lower_is_better
+    if lower_is_better is None:
+        lower_is_better = (
+            False
+            if args.json
+            else prompt("Is a lower score better? (y/N)", default="n")
+            .lower()
+            .startswith("y")
+        )
+    try:
+        payload = create_competition_workspace(
+            competition,
+            directory,
+            metric=metric,
+            lower_is_better=lower_is_better,
+            force=args.force,
+        )
+    except FileExistsError as exc:
+        raise KgniteError(str(exc)) from exc
+
+    should_download = args.download
+    if should_download is None:
+        should_download = (
+            False
+            if args.json
+            else prompt("Download competition files now? (y/N)", default="n")
+            .lower()
+            .startswith("y")
+        )
+    if should_download:
+        payload["downloaded_to"] = require_kagglehub().competition_download(
+            competition,
+            force_download=args.force,
+            output_dir=str(directory.expanduser().resolve() / "data"),
+        )
+
+    should_template = args.template
+    if should_template is None:
+        should_template = (
+            True
+            if args.json
+            else prompt("Generate a starter notebook? (Y/n)", default="y").lower()
+            != "n"
+        )
+    if should_template:
+        try:
+            notebook = write_starter_notebook(
+                competition,
+                directory / "notebooks" / "starter.ipynb",
+                directory / "data",
+                force=args.force,
+            )
+        except FileExistsError as exc:
+            raise KgniteError(str(exc)) from exc
+        payload["notebook"] = str(notebook)
+
+    if args.json:
+        print_json(payload)
+    else:
+        print(f"Competition workspace created: {payload['directory']}")
+        if payload.get("downloaded_to"):
+            print(f"Data downloaded to: {payload['downloaded_to']}")
+        if payload.get("notebook"):
+            print(f"Starter notebook: {payload['notebook']}")
+    return 0
+
+
+def command_template(args: argparse.Namespace) -> int:
+    output = Path(args.output or f"{args.competition}-starter.ipynb")
+    try:
+        written = write_starter_notebook(
+            args.competition, output, Path(args.data_dir), force=args.force
+        )
+    except FileExistsError as exc:
+        raise KgniteError(str(exc)) from exc
+    payload = {
+        "competition": args.competition,
+        "notebook": str(written),
+        "data_dir": args.data_dir,
+    }
+    if args.json:
+        print_json(payload)
+    else:
+        print(f"Starter notebook created: {written}")
+    return 0
+
+
+def command_performance(args: argparse.Namespace) -> int:
+    history_path = (
+        Path(args.history or Path(".kgnite") / f"{args.competition}-scores.json")
+        .expanduser()
+        .resolve()
+    )
+    try:
+        history = load_score_history(history_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise KgniteError(f"Could not read score history: {exc}") from exc
+    if args.sync:
+        result = run_kaggle(["competitions", "submissions", args.competition, "--csv"])
+        history = merge_score_history(
+            history, normalize_scores(parse_csv_output(result.stdout), args.competition)
+        )
+        save_score_history(history_path, history)
+
+    rows = [row for row in history if row.get("competition") == args.competition]
+    scores = [float(row["score"]) for row in rows]
+    best = (min(scores) if args.lower_is_better else max(scores)) if scores else None
+    payload = {
+        "competition": args.competition,
+        "history": str(history_path),
+        "submissions": len(rows),
+        "best_score": best,
+        "trend": score_sparkline(scores),
+        "scores": rows,
+    }
+    if args.json:
+        print_json(payload)
+    else:
+        print(f"Competition: {args.competition}")
+        print(f"Submissions: {len(rows)}")
+        print(f"Best score: {best if best is not None else 'n/a'}")
+        print(f"Trend: {payload['trend'] or 'n/a'}")
+        print_table(rows)
+    return 0
+
+
+def command_trending(args: argparse.Namespace) -> int:
+    if args.limit < 1:
+        raise KgniteError("--limit must be at least 1.")
+    sort_orders = {
+        "datasets": {"popular": "hottest", "new": "updated"},
+        "competitions": {"popular": "numberOfTeams", "new": "recentlyCreated"},
+        "kernels": {"popular": "hotness", "new": "dateCreated"},
+        "models": {"popular": "hotness", "new": "createTime"},
+    }
+    search_args = argparse.Namespace(
+        resource=args.resource,
+        search=args.search,
+        sort_by=sort_orders[args.resource][args.order],
+        page=1,
+        page_size=max(args.limit, 20),
+        owner=None,
+        user=None,
+        category=args.category,
+        group=None,
+        language=None,
+        kernel_type=None,
+        output_type=None,
+        dataset=None,
+        competition=None,
+        tag=args.tag,
+        keyword=args.keyword,
+    )
+    rows = search_rows(search_args)[: args.limit]
+    if args.json:
+        print_json(rows)
+    else:
+        print_table(rows)
+    return 0
+
+
+def command_web(args: argparse.Namespace) -> int:
+    from kgnite.webapp import serve_web_app
+
+    try:
+        return serve_web_app(
+            port=args.port,
+            open_browser=args.browser,
+            heartbeat_timeout=args.heartbeat_timeout,
+            command_timeout=args.command_timeout,
+        )
+    except (OSError, ValueError) as exc:
+        raise KgniteError(f"Could not start the web app: {exc}") from exc
+
+
+def list_files(
+    resource: str,
+    handle: str,
+    *,
+    page_size: int | None = None,
+    page_token: str | None = None,
+) -> list[dict[str, str]]:
     if resource == "datasets":
         command = ["datasets", "files", handle, "--csv"]
     elif resource == "competitions":
@@ -706,6 +1045,7 @@ def model_info(handle: str) -> dict[str, Any]:
 
 def command_info(args: argparse.Namespace) -> int:
     resource = normalize_resource(args.resource)
+    validate_resource_handle(resource, args.handle)
     if resource == "datasets":
         payload = dataset_info(args.handle)
     elif resource == "competitions":
@@ -726,7 +1066,10 @@ def command_info(args: argparse.Namespace) -> int:
 
 def command_files(args: argparse.Namespace) -> int:
     resource = normalize_resource(args.resource)
-    rows = list_files(resource, args.handle, page_size=args.page_size, page_token=args.page_token)
+    validate_resource_handle(resource, args.handle)
+    rows = list_files(
+        resource, args.handle, page_size=args.page_size, page_token=args.page_token
+    )
     if args.json:
         print_json(rows)
     else:
@@ -735,32 +1078,39 @@ def command_files(args: argparse.Namespace) -> int:
 
 
 def command_download(args: argparse.Namespace) -> int:
-    output_dir = str(Path(args.output_dir).expanduser().resolve()) if args.output_dir else None
+    handle_resource = (
+        "notebook" if args.resource == "notebook-output" else args.resource
+    )
+    validate_resource_handle(handle_resource, args.handle)
+    hub = require_kagglehub()
+    output_dir = (
+        str(Path(args.output_dir).expanduser().resolve()) if args.output_dir else None
+    )
     downloaded_path: str
 
     if args.resource == "dataset":
-        downloaded_path = kagglehub.dataset_download(
+        downloaded_path = hub.dataset_download(
             args.handle,
             path=args.path,
             force_download=args.force,
             output_dir=output_dir,
         )
     elif args.resource == "competition":
-        downloaded_path = kagglehub.competition_download(
+        downloaded_path = hub.competition_download(
             args.handle,
             path=args.path,
             force_download=args.force,
             output_dir=output_dir,
         )
     elif args.resource == "model":
-        downloaded_path = kagglehub.model_download(
+        downloaded_path = hub.model_download(
             args.handle,
             path=args.path,
             force_download=args.force,
             output_dir=output_dir,
         )
     elif args.resource == "notebook-output":
-        downloaded_path = kagglehub.notebook_output_download(
+        downloaded_path = hub.notebook_output_download(
             args.handle,
             path=args.path,
             force_download=args.force,
@@ -781,14 +1131,180 @@ def command_download(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_preview(args: argparse.Namespace) -> int:
+    if args.rows < 1:
+        raise KgniteError("--rows must be at least 1.")
+    if str(args.columns).casefold() == "all":
+        column_limit = None
+    else:
+        try:
+            column_limit = int(args.columns)
+        except ValueError as exc:
+            raise KgniteError("--columns must be a positive number or `all`.") from exc
+        if column_limit < 1:
+            raise KgniteError("--columns must be a positive number or `all`.")
+    if args.max_file_size_mb <= 0:
+        raise KgniteError("--max-file-size-mb must be greater than zero.")
+    max_bytes = int(args.max_file_size_mb * 1024 * 1024)
+
+    with tempfile.TemporaryDirectory(prefix="kgnite-preview-") as tmpdir:
+        if args.resource == "dataset":
+            validate_resource_handle("dataset", args.source)
+            files = list_files("datasets", args.source)
+            try:
+                remote_path, reported_size = choose_preview_file(
+                    files, args.path, max_bytes=max_bytes
+                )
+            except ValueError as exc:
+                raise KgniteError(str(exc)) from exc
+            downloaded = _download_preview_dataset(
+                args.source,
+                remote_path,
+                tmpdir,
+                force=args.force,
+                quiet=args.json,
+            )
+            downloaded_path = Path(downloaded)
+            if not downloaded_path.is_file():
+                exact = downloaded_path / remote_path
+                matches = list(downloaded_path.rglob(Path(remote_path).name))
+                downloaded_path = (
+                    exact if exact.is_file() else matches[0] if matches else exact
+                )
+            source_label = args.source
+            file_label = remote_path
+        elif args.resource == "local":
+            requested = Path(args.source).expanduser()
+            if not requested.is_absolute():
+                raise KgniteError(
+                    "Local preview requires an absolute workstation path."
+                )
+            downloaded_path = requested.resolve()
+            if not downloaded_path.is_file():
+                raise KgniteError(
+                    f"Local preview file does not exist: {downloaded_path}"
+                )
+            reported_size = downloaded_path.stat().st_size
+            source_label = str(downloaded_path)
+            file_label = downloaded_path.name
+        else:
+            downloaded_path, reported_size = _download_preview_url(
+                args.source, Path(tmpdir), max_bytes=max_bytes
+            )
+            source_label = args.source
+            file_label = downloaded_path.name
+        if not downloaded_path.is_file():
+            raise KgniteError(f"Preview file could not be located: {source_label}")
+        actual_size = downloaded_path.stat().st_size
+        if actual_size > max_bytes:
+            raise KgniteError(
+                f"File is {actual_size / 1024 / 1024:.1f} MB, above the preview limit of "
+                f"{args.max_file_size_mb:g} MB."
+            )
+        try:
+            preview = preview_local_file(
+                downloaded_path, row_limit=args.rows, column_limit=column_limit
+            )
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            raise KgniteError(f"Could not preview `{file_label}`: {exc}") from exc
+
+    payload = {
+        "resource": args.resource,
+        "source": source_label,
+        "file": file_label,
+        "file_size": reported_size if reported_size is not None else actual_size,
+        "row_limit": args.rows,
+        "column_limit": "all" if column_limit is None else column_limit,
+        **preview,
+    }
+    if args.json:
+        print_json(payload)
+    else:
+        print(f"Source: {source_label}")
+        print(f"File: {file_label}")
+        print(
+            f"Shape: {preview['shape']['rows']} rows × {preview['shape']['columns']} columns"
+        )
+        print(f"Columns: {', '.join(preview['columns'])}")
+        print_table(preview["rows"])
+    return 0
+
+
+def _download_preview_dataset(
+    handle: str, remote_path: str, output_dir: str, *, force: bool, quiet: bool
+) -> str:
+    hub_logger = logging.getLogger("kagglehub")
+    previous_level = hub_logger.level
+    if quiet:
+        hub_logger.setLevel(logging.CRITICAL)
+    try:
+        with (
+            contextlib.redirect_stdout(io.StringIO())
+            if quiet
+            else contextlib.nullcontext(),
+            contextlib.redirect_stderr(io.StringIO())
+            if quiet
+            else contextlib.nullcontext(),
+        ):
+            return require_kagglehub().dataset_download(
+                handle, path=remote_path, force_download=force, output_dir=output_dir
+            )
+    finally:
+        hub_logger.setLevel(previous_level)
+
+
+def _download_preview_url(
+    url: str, output_dir: Path, *, max_bytes: int
+) -> tuple[Path, int]:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise KgniteError("Remote preview URL must use http:// or https://.")
+    request = urllib.request.Request(url, headers={"User-Agent": "kgnite-preview/0.1"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            final_scheme = urllib.parse.urlparse(response.geturl()).scheme
+            if final_scheme not in {"http", "https"}:
+                raise KgniteError("Remote URL redirected to an unsupported scheme.")
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > max_bytes:
+                raise KgniteError(
+                    f"Remote file is {int(content_length) / 1024 / 1024:.1f} MB, above the preview limit."
+                )
+            name = Path(urllib.parse.unquote(parsed.path)).name or "preview"
+            suffix = Path(name).suffix.lower()
+            if suffix not in {".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".txt"}:
+                content_type = response.headers.get_content_type()
+                suffix = {
+                    "text/csv": ".csv",
+                    "application/json": ".json",
+                    "text/plain": ".txt",
+                }.get(content_type, "")
+                name += suffix
+            destination = output_dir / name
+            data = response.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                raise KgniteError(
+                    "Remote file exceeded the preview limit while downloading."
+                )
+            destination.write_bytes(data)
+            return destination, len(data)
+    except (OSError, ValueError) as exc:
+        if isinstance(exc, KgniteError):
+            raise
+        raise KgniteError(f"Could not fetch remote preview URL: {exc}") from exc
+
+
 def command_pull_notebook(args: argparse.Namespace) -> int:
+    validate_resource_handle("notebook", args.handle)
     command = ["kernels", "pull", args.handle]
     if args.output_dir:
         command += ["--path", str(Path(args.output_dir).expanduser().resolve())]
     result = run_kaggle(command)
     output = (result.stdout or result.stderr).strip()
     if args.json:
-        print_json({"resource": "notebook-code", "handle": args.handle, "result": output})
+        print_json(
+            {"resource": "notebook-code", "handle": args.handle, "result": output}
+        )
     else:
         print(output)
     return 0
@@ -796,7 +1312,9 @@ def command_pull_notebook(args: argparse.Namespace) -> int:
 
 def command_submit(args: argparse.Namespace) -> int:
     if not args.file and not args.kernel:
-        raise KgniteError("Provide either --file or --kernel for a competition submission.")
+        raise KgniteError(
+            "Provide either --file or --kernel for a competition submission."
+        )
     command = ["competitions", "submit", args.competition, "--message", args.message]
     if args.file:
         command += ["--file", str(Path(args.file).expanduser().resolve())]
@@ -829,7 +1347,11 @@ def command_leaderboard(args: argparse.Namespace) -> int:
     result = run_kaggle(command)
     output = result.stdout.strip()
     if args.download:
-        payload = {"competition": args.competition, "output_dir": args.output_dir or os.getcwd(), "result": output}
+        payload = {
+            "competition": args.competition,
+            "output_dir": args.output_dir or os.getcwd(),
+            "result": output,
+        }
         if args.json:
             print_json(payload)
         else:
@@ -881,7 +1403,7 @@ def command_submissions(args: argparse.Namespace) -> int:
 def command_upload_dataset(args: argparse.Namespace) -> int:
     local_dir = str(Path(args.local_dir).expanduser().resolve())
     if args.handle:
-        kagglehub.dataset_upload(
+        require_kagglehub().dataset_upload(
             args.handle,
             local_dir,
             version_notes=args.message or "",
@@ -894,7 +1416,12 @@ def command_upload_dataset(args: argparse.Namespace) -> int:
             "local_dir": local_dir,
         }
     else:
-        command = ["datasets", "version" if args.version else "create", "--path", local_dir]
+        command = [
+            "datasets",
+            "version" if args.version else "create",
+            "--path",
+            local_dir,
+        ]
         if args.message:
             command += ["--message", args.message]
         if args.public:
@@ -923,7 +1450,7 @@ def command_upload_dataset(args: argparse.Namespace) -> int:
 def command_upload_model(args: argparse.Namespace) -> int:
     local_dir = str(Path(args.local_dir).expanduser().resolve())
     if args.handle:
-        kagglehub.model_upload(
+        require_kagglehub().model_upload(
             args.handle,
             local_dir,
             license_name=args.license_name,
@@ -973,13 +1500,13 @@ def command_completions(args: argparse.Namespace) -> int:
     if shell == "bash":
         target_file = target_dir / "kgnite.bash"
         rc_file = Path.home() / ".bashrc"
-        source_line = f'source "{target_file}"'
         refresh_cmd = f'source "{target_file}"'
     else:
         target_file = target_dir / "_kgnite"
         rc_file = Path.home() / ".zshrc"
-        source_line = f"fpath=({target_dir} $fpath)"
-        refresh_cmd = f'fpath=("{target_dir}" $fpath); autoload -Uz compinit && compinit'
+        refresh_cmd = (
+            f'fpath=("{target_dir}" $fpath); autoload -Uz compinit && compinit'
+        )
 
     target_file.write_text(script)
 
@@ -1001,18 +1528,24 @@ def command_completions(args: argparse.Namespace) -> int:
         print("To enable it now, run:")
         print(f'  source "{target_file}"')
         print()
-        print("To make it persistent, add this to your shell config if it is not already there:")
+        print(
+            "To make it persistent, add this to your shell config if it is not already there:"
+        )
         print(f'  echo \'source "{target_file}"\' >> "{rc_file}"')
     else:
         print("To enable it now, run:")
         print(f'  fpath=("{target_dir}" $fpath)')
         print("  autoload -Uz compinit && compinit")
         print()
-        print("To make it persistent, add these lines to your shell config if they are not already there:")
+        print(
+            "To make it persistent, add these lines to your shell config if they are not already there:"
+        )
         print(f'  echo \'fpath=("{target_dir}" $fpath)\' >> "{rc_file}"')
-        print(f'  echo \'autoload -Uz compinit && compinit\' >> "{rc_file}"')
+        print(f"  echo 'autoload -Uz compinit && compinit' >> \"{rc_file}\"")
     print()
-    print("Run `kgnite completions` again after reinstalling if you want to refresh the generated completion file.")
+    print(
+        "Run `kgnite completions` again after reinstalling if you want to refresh the generated completion file."
+    )
     return 0
 
 
@@ -1034,7 +1567,11 @@ def normalize_handle(resource: str, value: str) -> str:
     cleaned = value.strip()
     if cleaned.startswith("https://www.kaggle.com/"):
         parts = cleaned.removeprefix("https://www.kaggle.com/").split("/")
-        if resource == "competitions" and len(parts) >= 2 and parts[0] == "competitions":
+        if (
+            resource == "competitions"
+            and len(parts) >= 2
+            and parts[0] == "competitions"
+        ):
             return parts[1]
         if resource == "datasets" and len(parts) >= 3 and parts[0] == "datasets":
             return f"{parts[1]}/{parts[2]}"
@@ -1062,13 +1599,19 @@ def build_files_args(resource: str, handle: str) -> argparse.Namespace:
         "kernels": "notebook",
         "models": "model",
     }[resource]
-    return argparse.Namespace(resource=mapped, handle=handle, page_size=None, page_token=None, json=False)
+    return argparse.Namespace(
+        resource=mapped, handle=handle, page_size=None, page_token=None, json=False
+    )
 
 
 def command_browse(args: argparse.Namespace) -> int:
     print("Interactive browse mode")
-    print("Step 1: choose a resource from the menu below using a number or text, or type a search query directly.")
-    print("If you type a normal query like `llm` or `gemma`, kgnite will use `datasets` as the default resource.")
+    print(
+        "Step 1: choose a resource from the menu below using a number or text, or type a search query directly."
+    )
+    print(
+        "If you type a normal query like `llm` or `gemma`, kgnite will use `datasets` as the default resource."
+    )
     print("Step 2: pick a result number.")
     print("Step 3: choose an action such as info, files, or download.")
     print()
@@ -1160,8 +1703,14 @@ def command_browse(args: argparse.Namespace) -> int:
     if action == "files":
         return command_files(build_files_args(resource, handle))
     if action == "download":
-        mapped = {"datasets": "dataset", "competitions": "competition", "models": "model"}[resource]
-        destination = download_target_dir(resource, handle, choose_download_destination(resource))
+        mapped = {
+            "datasets": "dataset",
+            "competitions": "competition",
+            "models": "model",
+        }[resource]
+        destination = download_target_dir(
+            resource, handle, choose_download_destination(resource)
+        )
         return command_download(
             argparse.Namespace(
                 resource=mapped,
@@ -1173,7 +1722,9 @@ def command_browse(args: argparse.Namespace) -> int:
             )
         )
     if action == "download-output" and resource == "kernels":
-        destination = download_target_dir(resource, handle, choose_download_destination(resource))
+        destination = download_target_dir(
+            resource, handle, choose_download_destination(resource)
+        )
         return command_download(
             argparse.Namespace(
                 resource="notebook-output",
@@ -1185,8 +1736,12 @@ def command_browse(args: argparse.Namespace) -> int:
             )
         )
     if action == "pull-source" and resource == "kernels":
-        destination = download_target_dir(resource, handle, choose_download_destination(resource))
-        return command_pull_notebook(argparse.Namespace(handle=handle, output_dir=destination, json=False))
+        destination = download_target_dir(
+            resource, handle, choose_download_destination(resource)
+        )
+        return command_pull_notebook(
+            argparse.Namespace(handle=handle, output_dir=destination, json=False)
+        )
 
     raise KgniteError(f"Unsupported browse action: {action}")
 
@@ -1198,14 +1753,28 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=textwrap.dedent(USAGE_TEXT),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    subparsers = parser.add_subparsers(dest="command", required=True, parser_class=KgniteArgumentParser)
+    subparsers = parser.add_subparsers(
+        dest="command", required=True, parser_class=KgniteArgumentParser
+    )
 
-    usage_parser = subparsers.add_parser("usage", help="Show example workflows and common command patterns.")
+    usage_parser = subparsers.add_parser(
+        "usage", help="Show example workflows and common command patterns."
+    )
     usage_parser.set_defaults(func=command_usage)
 
-    completions_parser = subparsers.add_parser("completions", help="Install or print shell completion setup.")
-    completions_parser.add_argument("--shell", choices=["bash", "zsh"], help="Shell type. Default is auto-detected from $SHELL.")
-    completions_parser.add_argument("--print", action="store_true", help="Print the completion script instead of installing it.")
+    completions_parser = subparsers.add_parser(
+        "completions", help="Install or print shell completion setup."
+    )
+    completions_parser.add_argument(
+        "--shell",
+        choices=["bash", "zsh"],
+        help="Shell type. Default is auto-detected from $SHELL.",
+    )
+    completions_parser.add_argument(
+        "--print",
+        action="store_true",
+        help="Print the completion script instead of installing it.",
+    )
     add_common_output_flags(completions_parser)
     completions_parser.set_defaults(func=command_completions)
 
@@ -1217,7 +1786,9 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.set_defaults(func=command_doctor)
 
     search_parser = subparsers.add_parser("search", help="Search Kaggle resources.")
-    search_parser.add_argument("resource", choices=["datasets", "competitions", "kernels", "models"])
+    search_parser.add_argument(
+        "resource", choices=["datasets", "competitions", "kernels", "models"]
+    )
     search_parser.add_argument("search", nargs="?", help="Search text.")
     search_parser.add_argument("--sort-by")
     search_parser.add_argument("--page", type=int)
@@ -1231,58 +1802,244 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--output-type")
     search_parser.add_argument("--dataset")
     search_parser.add_argument("--competition")
+    search_parser.add_argument(
+        "--tag",
+        action="append",
+        help="Require a tag in the returned metadata. Repeatable.",
+    )
+    search_parser.add_argument(
+        "--keyword",
+        action="append",
+        help="Require a keyword in the returned metadata. Repeatable.",
+    )
     add_common_output_flags(search_parser)
     search_parser.set_defaults(func=command_search)
 
-    info_parser = subparsers.add_parser("info", help="Show metadata and related information for a resource.")
-    info_parser.add_argument("resource", choices=["dataset", "competition", "notebook", "model"])
+    setup_parser = subparsers.add_parser(
+        "setup", help="Interactively create a local competition workspace."
+    )
+    setup_parser.add_argument("competition", nargs="?", help="Kaggle competition slug.")
+    setup_parser.add_argument(
+        "--directory", help="Workspace directory. Defaults to the competition slug."
+    )
+    setup_parser.add_argument(
+        "--metric", help="Score metric name stored in the workspace configuration."
+    )
+    setup_parser.add_argument(
+        "--lower-is-better", action=argparse.BooleanOptionalAction, default=None
+    )
+    setup_parser.add_argument(
+        "--download", action=argparse.BooleanOptionalAction, default=None
+    )
+    setup_parser.add_argument(
+        "--template", action=argparse.BooleanOptionalAction, default=None
+    )
+    setup_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace generated files and refresh downloads.",
+    )
+    add_common_output_flags(setup_parser)
+    setup_parser.set_defaults(func=command_setup)
+
+    template_parser = subparsers.add_parser(
+        "template", help="Generate a starter competition notebook."
+    )
+    template_parser.add_argument("competition", help="Kaggle competition slug.")
+    template_parser.add_argument(
+        "--output", help="Notebook path. Defaults to <competition>-starter.ipynb."
+    )
+    template_parser.add_argument(
+        "--data-dir",
+        default="./data",
+        help="Competition data directory used by the notebook.",
+    )
+    template_parser.add_argument(
+        "--force", action="store_true", help="Overwrite an existing notebook."
+    )
+    add_common_output_flags(template_parser)
+    template_parser.set_defaults(func=command_template)
+
+    performance_parser = subparsers.add_parser(
+        "performance", help="Track and visualize submission scores over time."
+    )
+    performance_parser.add_argument("competition", help="Kaggle competition slug.")
+    performance_parser.add_argument(
+        "--sync",
+        action="store_true",
+        help="Fetch and merge current Kaggle submissions.",
+    )
+    performance_parser.add_argument("--history", help="Local JSON history path.")
+    performance_parser.add_argument(
+        "--lower-is-better",
+        action="store_true",
+        help="Treat the minimum score as best.",
+    )
+    add_common_output_flags(performance_parser)
+    performance_parser.set_defaults(func=command_performance)
+
+    trending_parser = subparsers.add_parser(
+        "trending", help="Show popular or newly added Kaggle resources."
+    )
+    trending_parser.add_argument(
+        "resource", choices=["datasets", "competitions", "kernels", "models"]
+    )
+    trending_parser.add_argument(
+        "--order", choices=["popular", "new"], default="popular"
+    )
+    trending_parser.add_argument("--search", help="Optional upstream search query.")
+    trending_parser.add_argument(
+        "--tag", action="append", help="Require a tag. Repeatable."
+    )
+    trending_parser.add_argument(
+        "--keyword", action="append", help="Require a keyword. Repeatable."
+    )
+    trending_parser.add_argument("--category", help="Competition category.")
+    trending_parser.add_argument("--limit", type=int, default=10)
+    add_common_output_flags(trending_parser)
+    trending_parser.set_defaults(func=command_trending)
+
+    web_parser = subparsers.add_parser(
+        "web", help="Launch a temporary localhost web app in the default browser."
+    )
+    web_parser.add_argument(
+        "--port", type=int, default=0, help="Local port. Defaults to an available port."
+    )
+    web_parser.add_argument(
+        "--browser",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Open the default browser. Use --no-browser to print the URL only.",
+    )
+    web_parser.add_argument(
+        "--heartbeat-timeout",
+        type=float,
+        default=30.0,
+        help="Seconds without a page heartbeat before shutdown.",
+    )
+    web_parser.add_argument(
+        "--command-timeout",
+        type=float,
+        default=300.0,
+        help="Maximum seconds allowed for one web-triggered command.",
+    )
+    web_parser.set_defaults(func=command_web)
+
+    info_parser = subparsers.add_parser(
+        "info", help="Show metadata and related information for a resource."
+    )
+    info_parser.add_argument(
+        "resource", choices=["dataset", "competition", "notebook", "model"]
+    )
     info_parser.add_argument("handle")
     add_common_output_flags(info_parser)
     info_parser.set_defaults(func=command_info)
 
-    files_parser = subparsers.add_parser("files", help="List files for a dataset, competition, notebook, or model version.")
-    files_parser.add_argument("resource", choices=["dataset", "competition", "notebook", "model"])
+    files_parser = subparsers.add_parser(
+        "files",
+        help="List files for a dataset, competition, notebook, or model version.",
+    )
+    files_parser.add_argument(
+        "resource", choices=["dataset", "competition", "notebook", "model"]
+    )
     files_parser.add_argument("handle")
     files_parser.add_argument("--page-size", type=int)
     files_parser.add_argument("--page-token")
     add_common_output_flags(files_parser)
     files_parser.set_defaults(func=command_files)
 
-    download_parser = subparsers.add_parser("download", help="Download Kaggle assets using kagglehub.")
-    download_parser.add_argument("resource", choices=["dataset", "competition", "model", "notebook-output"])
+    download_parser = subparsers.add_parser(
+        "download", help="Download Kaggle assets using kagglehub."
+    )
+    download_parser.add_argument(
+        "resource", choices=["dataset", "competition", "model", "notebook-output"]
+    )
     download_parser.add_argument("handle")
-    download_parser.add_argument("--path", help="Specific file path within the remote resource.")
-    download_parser.add_argument("--output-dir", help="Target directory for the downloaded files.")
-    download_parser.add_argument("--force", action="store_true", help="Force a fresh download.")
+    download_parser.add_argument(
+        "--path", help="Specific file path within the remote resource."
+    )
+    download_parser.add_argument(
+        "--output-dir", help="Target directory for the downloaded files."
+    )
+    download_parser.add_argument(
+        "--force", action="store_true", help="Force a fresh download."
+    )
     add_common_output_flags(download_parser)
     download_parser.set_defaults(func=command_download)
 
-    pull_parser = subparsers.add_parser("pull-notebook", help="Pull notebook source files via the Kaggle CLI.")
+    preview_parser = subparsers.add_parser(
+        "preview",
+        help="Preview rows from one dataset file without downloading the full dataset.",
+    )
+    preview_parser.add_argument(
+        "resource", choices=["dataset", "local", "url"], help="Preview source type."
+    )
+    preview_parser.add_argument(
+        "source", help="Dataset handle, absolute local path, or HTTP/HTTPS URL."
+    )
+    preview_parser.add_argument(
+        "--path", help="Specific remote CSV, TSV, JSON, JSONL, or text file."
+    )
+    preview_parser.add_argument(
+        "--rows", type=int, default=10, help="Maximum rows to display."
+    )
+    preview_parser.add_argument(
+        "--columns", default="10", help="Maximum columns to display, or `all`."
+    )
+    preview_parser.add_argument(
+        "--max-file-size-mb",
+        type=float,
+        default=25.0,
+        help="Refuse files larger than this limit. Defaults to 25 MB.",
+    )
+    preview_parser.add_argument(
+        "--force", action="store_true", help="Refresh the selected cached file."
+    )
+    add_common_output_flags(preview_parser)
+    preview_parser.set_defaults(func=command_preview)
+
+    pull_parser = subparsers.add_parser(
+        "pull-notebook", help="Pull notebook source files via the Kaggle CLI."
+    )
     pull_parser.add_argument("handle")
     pull_parser.add_argument("--output-dir")
     add_common_output_flags(pull_parser)
     pull_parser.set_defaults(func=command_pull_notebook)
 
-    submit_parser = subparsers.add_parser("submit", help="Submit a file or notebook run to a Kaggle competition.")
+    submit_parser = subparsers.add_parser(
+        "submit", help="Submit a file or notebook run to a Kaggle competition."
+    )
     submit_parser.add_argument("competition")
     submit_parser.add_argument("--file", help="Submission file path.")
-    submit_parser.add_argument("--kernel", help="Notebook handle for code competitions.")
-    submit_parser.add_argument("--version", type=int, help="Notebook version for code competitions.")
+    submit_parser.add_argument(
+        "--kernel", help="Notebook handle for code competitions."
+    )
+    submit_parser.add_argument(
+        "--version", type=int, help="Notebook version for code competitions."
+    )
     submit_parser.add_argument("--message", required=True, help="Submission message.")
     add_common_output_flags(submit_parser)
     submit_parser.set_defaults(func=command_submit)
 
-    leaderboard_parser = subparsers.add_parser("leaderboard", help="Show or download a competition leaderboard.")
+    leaderboard_parser = subparsers.add_parser(
+        "leaderboard", help="Show or download a competition leaderboard."
+    )
     leaderboard_parser.add_argument("competition")
-    leaderboard_parser.add_argument("--show", action="store_true", help="Show leaderboard rows in the terminal.")
-    leaderboard_parser.add_argument("--download", action="store_true", help="Download the leaderboard file.")
+    leaderboard_parser.add_argument(
+        "--show", action="store_true", help="Show leaderboard rows in the terminal."
+    )
+    leaderboard_parser.add_argument(
+        "--download", action="store_true", help="Download the leaderboard file."
+    )
     leaderboard_parser.add_argument("--output-dir")
     leaderboard_parser.add_argument("--page-size", type=int)
     leaderboard_parser.add_argument("--page-token")
     add_common_output_flags(leaderboard_parser)
     leaderboard_parser.set_defaults(func=command_leaderboard)
 
-    submissions_parser = subparsers.add_parser("submissions", help="List your submissions for a competition.")
+    submissions_parser = subparsers.add_parser(
+        "submissions", help="List your submissions for a competition."
+    )
     submissions_parser.add_argument("competition")
     add_common_output_flags(submissions_parser)
     submissions_parser.set_defaults(func=command_submissions)
@@ -1292,12 +2049,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Upload or version a dataset. Use --handle for kagglehub upload, or rely on metadata files for kaggle CLI mode.",
     )
     upload_dataset_parser.add_argument("local_dir")
-    upload_dataset_parser.add_argument("--handle", help="Dataset handle for kagglehub upload, e.g. owner/dataset.")
-    upload_dataset_parser.add_argument("--message", help="Version notes or create message.")
-    upload_dataset_parser.add_argument("--ignore", nargs="*", help="Ignore patterns for kagglehub upload.")
-    upload_dataset_parser.add_argument("--version", action="store_true", help="Use `kaggle datasets version` in CLI mode.")
-    upload_dataset_parser.add_argument("--public", action="store_true", help="Create the dataset as public in CLI mode.")
-    upload_dataset_parser.add_argument("--keep-tabular", action="store_true", help="Keep tabular files in native format in CLI mode.")
+    upload_dataset_parser.add_argument(
+        "--handle", help="Dataset handle for kagglehub upload, e.g. owner/dataset."
+    )
+    upload_dataset_parser.add_argument(
+        "--message", help="Version notes or create message."
+    )
+    upload_dataset_parser.add_argument(
+        "--ignore", nargs="*", help="Ignore patterns for kagglehub upload."
+    )
+    upload_dataset_parser.add_argument(
+        "--version",
+        action="store_true",
+        help="Use `kaggle datasets version` in CLI mode.",
+    )
+    upload_dataset_parser.add_argument(
+        "--public",
+        action="store_true",
+        help="Create the dataset as public in CLI mode.",
+    )
+    upload_dataset_parser.add_argument(
+        "--keep-tabular",
+        action="store_true",
+        help="Keep tabular files in native format in CLI mode.",
+    )
     upload_dataset_parser.add_argument("--dir-mode", choices=["skip", "zip", "tar"])
     upload_dataset_parser.add_argument("--delete-old-versions", action="store_true")
     add_common_output_flags(upload_dataset_parser)
@@ -1308,23 +2083,55 @@ def build_parser() -> argparse.ArgumentParser:
         help="Upload a model variation/version. Use --handle for kagglehub upload, or CLI metadata mode for create/update.",
     )
     upload_model_parser.add_argument("local_dir")
-    upload_model_parser.add_argument("--handle", help="Model variation handle for kagglehub upload, e.g. owner/model/framework/variation.")
-    upload_model_parser.add_argument("--message", help="Version notes for kagglehub upload.")
-    upload_model_parser.add_argument("--license-name", help="License name for kagglehub upload when creating a model.")
-    upload_model_parser.add_argument("--ignore", nargs="*", help="Ignore patterns for kagglehub upload.")
-    upload_model_parser.add_argument("--sigstore", action="store_true", help="Enable sigstore signing in kagglehub mode.")
-    upload_model_parser.add_argument("--action", choices=["create", "update"], default="create", help="CLI metadata mode action.")
+    upload_model_parser.add_argument(
+        "--handle",
+        help="Model variation handle for kagglehub upload, e.g. owner/model/framework/variation.",
+    )
+    upload_model_parser.add_argument(
+        "--message", help="Version notes for kagglehub upload."
+    )
+    upload_model_parser.add_argument(
+        "--license-name",
+        help="License name for kagglehub upload when creating a model.",
+    )
+    upload_model_parser.add_argument(
+        "--ignore", nargs="*", help="Ignore patterns for kagglehub upload."
+    )
+    upload_model_parser.add_argument(
+        "--sigstore",
+        action="store_true",
+        help="Enable sigstore signing in kagglehub mode.",
+    )
+    upload_model_parser.add_argument(
+        "--action",
+        choices=["create", "update"],
+        default="create",
+        help="CLI metadata mode action.",
+    )
     add_common_output_flags(upload_model_parser)
     upload_model_parser.set_defaults(func=command_upload_model)
 
-    browse_parser = subparsers.add_parser("browse", help="Interactive terminal workflow for search -> inspect -> download.")
-    browse_parser.add_argument("--resource", choices=["datasets", "competitions", "kernels", "models"])
+    browse_parser = subparsers.add_parser(
+        "browse",
+        help="Interactive terminal workflow for search -> inspect -> download.",
+    )
+    browse_parser.add_argument(
+        "--resource", choices=["datasets", "competitions", "kernels", "models"]
+    )
     browse_parser.add_argument("--search")
     browse_parser.add_argument("--sort-by")
     browse_parser.add_argument("--page", type=int, default=1)
     browse_parser.add_argument("--page-size", type=int, default=20)
-    browse_parser.add_argument("--limit", type=int, default=10, help="How many search hits to show in the interactive picker.")
-    browse_parser.add_argument("--output-dir", help="Default destination for interactive downloads or notebook pulls.")
+    browse_parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="How many search hits to show in the interactive picker.",
+    )
+    browse_parser.add_argument(
+        "--output-dir",
+        help="Default destination for interactive downloads or notebook pulls.",
+    )
     browse_parser.set_defaults(func=command_browse)
 
     return parser
