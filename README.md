@@ -256,7 +256,7 @@ The web navigation maps the CLI into these pages:
 | Discover | `search`, `trending`, and the discovery portion of `browse` |
 | Competition | `setup`, `template`, `performance`, `submit` |
 | Resources | `info`, `files`, `preview`, `download`, `pull-notebook`, `leaderboard`, `submissions` |
-| Uploads | `upload-dataset`, `upload-model` |
+| Uploads | `prepare-notebook`, `push-notebook`, `upload-dataset`, `upload-model` |
 | System | `doctor`, `usage`, and safe `completions --print` output |
 | Advanced | Allowlisted non-interactive commands and uncommon option combinations |
 
@@ -288,6 +288,38 @@ The advanced runner parses command arguments without invoking a shell. `web`, in
 
 ## Competition workflow
 
+### Workspace settings
+
+kgnite stores persistent settings in `~/.config/kgnite/settings.json`. The default workspace is `/Users/rajeshsingh/myprojects/kaggle`, with separate `competitions/` and `projects/` folders:
+
+```bash
+kgnite settings --workspace-dir /Users/rajeshsingh/myprojects/kaggle \
+  --competitions-dir competitions \
+  --projects-dir projects \
+  --kaggle-username rajinh
+```
+
+Running `kgnite settings` without options displays the effective configuration. Competition setup now defaults to `<workspace>/competitions/<slug>`.
+
+Create a generic project with Kaggle sources:
+
+```bash
+kgnite create-project customer-churn \
+  --dataset-source owner/reference-data \
+  --model-source owner/model/framework/variation
+```
+
+This creates `<workspace>/projects/customer-churn` with local data, notebooks, submissions, Kaggle notebook bundles, and Kaggle dataset bundles.
+
+Every generated competition or project also contains a tailored `README.md` describing its folders, local and Kaggle data paths, source metadata, terminal commands, web workflows, publishing order, and troubleshooting steps.
+
+Add or refresh the guide in an existing workspace:
+
+```bash
+kgnite workspace-help titanic --type competition \
+  --directory /Users/rajeshsingh/myprojects/kaggle/competitions/titanic
+```
+
 ### 1. Create a workspace
 
 ```bash
@@ -298,10 +330,10 @@ Interactive mode asks for the competition, metric direction, whether to download
 
 ```text
 titanic/
-├── .kgnite.json
+├── .titanic-config.json
 ├── data/
 ├── notebooks/
-│   └── starter.ipynb
+│   └── titanic-01.ipynb
 └── submissions/
 ```
 
@@ -323,7 +355,7 @@ Use `--lower-is-better` for loss/error metrics and `--no-lower-is-better` for ac
 ```bash
 kgnite template titanic \
   --data-dir ./titanic/data \
-  --output ./titanic/notebooks/starter.ipynb \
+  --output ./titanic/notebooks/titanic-02.ipynb \
   --participant "Your Name" \
   --notes-page data-description
 ```
@@ -342,7 +374,57 @@ kgnite template titanic \
 
 Use `--no-competition-notes` when generating offline or when page content is not needed. The generated notebook also discovers train, test, and sample-submission CSV files. When a sample submission is available, its columns are documented. Use `--force` only when replacing an existing notebook is intentional.
 
-### 3. Submit a result
+### 3. Prepare and publish a showcase notebook
+
+Preparation copies the notebook and creates Kaggle metadata inside the same competition project. It does not contact Kaggle:
+
+```bash
+kgnite prepare-notebook ./titanic/notebooks/titanic-01.ipynb \
+  --title "Titanic Random Forest" \
+  --competition titanic \
+  --public
+```
+
+The default bundle is `./titanic/kaggle-notebooks/titanic-random-forest/`. Review it, then publish explicitly:
+
+```bash
+kgnite push-notebook ./titanic/kaggle-notebooks/titanic-random-forest
+```
+
+Generated notebooks automatically use `/kaggle/input/titanic` on Kaggle and the project data directory locally.
+
+All `kernel-metadata.json` source lists can be supplied explicitly:
+
+```bash
+kgnite prepare-notebook ./projects/churn/notebooks/churn-01.ipynb \
+  --title "Churn Analysis" \
+  --dataset-source owner/reference-data \
+  --competition-source playground-competition \
+  --kernel-source owner/feature-notebook \
+  --model-source owner/model/framework/variation
+```
+
+If you need a different Kaggle account owner than the configured username, add `--handle owner/title-slug`; when `--title` is supplied, kgnite derives the slug from the title so Kaggle does not warn about mismatched notebook IDs.
+
+For local data, stage a Kaggle dataset at the same time:
+
+```bash
+kgnite prepare-notebook ./projects/churn/notebooks/churn-01.ipynb \
+  --title "Churn Analysis" \
+  --local-dataset ./projects/churn/data \
+  --dataset-handle rajinh/churn-project-data \
+  --dataset-title "Churn project data"
+```
+
+Publish in dependency order using the returned command. `--with-datasets` uploads matching staged dataset bundles before pushing the notebook:
+
+```bash
+kgnite push-notebook ./projects/churn/kaggle-notebooks/churn-analysis --with-datasets
+```
+
+Use `--dataset-action version` after the dataset already exists. The notebook metadata references the staged dataset handle.
+
+### 4. Submit a result
 
 File-based competition:
 
@@ -361,7 +443,7 @@ kgnite submit my-code-competition \
   --message "notebook version 3"
 ```
 
-### 4. Track performance
+### 5. Track performance
 
 Fetch current submissions, merge them into local history, and show a score sparkline:
 
@@ -536,7 +618,7 @@ kgnite setup [competition] [options]
 | Option | When to use it |
 |---|---|
 | `--directory PATH` | Choose the workspace path; defaults to the competition slug. |
-| `--metric NAME` | Record the competition metric in `.kgnite.json`. |
+| `--metric NAME` | Record the competition metric in `.<competition-slug>-config.json`. |
 | `--lower-is-better` | Mark loss/error-style metrics. |
 | `--no-lower-is-better` | Mark score-style metrics where higher is better. |
 | `--download` / `--no-download` | Explicitly enable or skip the data download. |
@@ -804,7 +886,7 @@ Interactive download choices include the Kaggle cache, current directory, or a c
 
 ## Shell completions
 
-Install completions for the detected shell:
+Install or refresh completions for the detected shell on the current workstation:
 
 ```bash
 kgnite completions
@@ -817,7 +899,48 @@ kgnite completions --shell zsh
 kgnite completions --shell bash
 ```
 
-Generated files are stored under `~/.local/share/kgnite/completions`. The command prints the exact lines needed to enable completion immediately and persist it in your shell configuration. Run it again after upgrading `kgnite`.
+Generated files are stored under `~/.local/share/kgnite/completions`:
+
+- Zsh: `~/.local/share/kgnite/completions/_kgnite`
+- Bash: `~/.local/share/kgnite/completions/kgnite.bash`
+
+The command prints the exact line to run immediately and the line to add to your shell config. For example:
+
+```bash
+# zsh: enable immediately in the current terminal
+fpath=("$HOME/.local/share/kgnite/completions" $fpath); autoload -Uz compinit && compinit
+
+# bash: enable immediately in the current terminal
+source "$HOME/.local/share/kgnite/completions/kgnite.bash"
+```
+
+To persist completions, add the printed line to `~/.zshrc` or `~/.bashrc`, then open a new terminal or source that file:
+
+```bash
+source ~/.zshrc
+# or
+source ~/.bashrc
+```
+
+After upgrading or reinstalling `kgnite`, run `kgnite completions` again. This rewrites the completion file with the current command set, including newly added commands such as `settings`, `create-project`, `workspace-help`, `prepare-notebook`, and `push-notebook`.
+
+On another workstation, install or update `kgnite` first, then run the same command there:
+
+```bash
+cd /path/to/kgnite
+bash scripts/install.sh
+kgnite completions
+```
+
+For read-only environments or manual installation, print the script instead of installing it:
+
+```bash
+mkdir -p ~/.local/share/kgnite/completions
+kgnite completions --shell zsh --print > ~/.local/share/kgnite/completions/_kgnite
+kgnite completions --shell bash --print > ~/.local/share/kgnite/completions/kgnite.bash
+```
+
+The web app can print completion scripts from the **System** page, but it intentionally does not modify shell configuration files from the browser.
 
 ## Maintenance and development
 

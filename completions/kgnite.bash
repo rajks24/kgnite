@@ -2,7 +2,7 @@ _kgnite_completions() {
   local cur prev words cword
   _init_completion || return
 
-  local commands="usage doctor completions search setup template performance trending web info files download preview pull-notebook submit leaderboard submissions upload-dataset upload-model browse"
+  local commands="usage doctor completions settings create-project workspace-help search setup template performance trending web info files download preview pull-notebook prepare-notebook push-notebook submit leaderboard submissions upload-dataset upload-model browse"
   local resources_plural="datasets competitions kernels models"
   local resources_singular="dataset competition notebook model"
   local download_resources="dataset competition model notebook-output"
@@ -14,6 +14,22 @@ _kgnite_completions() {
   fi
 
   case "${words[1]}" in
+    completions)
+      COMPREPLY=( $(compgen -W "--shell --print" -- "$cur") )
+      ;;
+    settings)
+      COMPREPLY=( $(compgen -W "--workspace-dir --competitions-dir --projects-dir --kaggle-username --default-dataset-license --json" -- "$cur") )
+      ;;
+    create-project)
+      COMPREPLY=( $(compgen -W "--directory --participant --dataset-source --kernel-source --model-source --template --no-template --force --json" -- "$cur") )
+      ;;
+    workspace-help)
+      if [[ "$prev" == "--type" ]]; then
+        COMPREPLY=( $(compgen -W "competition project" -- "$cur") )
+        return
+      fi
+      COMPREPLY=( $(compgen -W "--type --directory --json" -- "$cur") )
+      ;;
     search)
       if [[ $cword -eq 2 ]]; then
         COMPREPLY=( $(compgen -W "$resources_plural" -- "$cur") )
@@ -93,6 +109,16 @@ _kgnite_completions() {
       ;;
     pull-notebook)
       COMPREPLY=( $(compgen -W "--output-dir --json" -- "$cur") )
+      ;;
+    prepare-notebook)
+      COMPREPLY=( $(compgen -W "--handle --competition --dataset-source --competition-source --kernel-source --model-source --local-dataset --dataset-handle --dataset-title --dataset-license --title --output-dir --public --enable-internet --enable-gpu --force --json" -- "$cur") )
+      ;;
+    push-notebook)
+      if [[ "$prev" == "--dataset-action" ]]; then
+        COMPREPLY=( $(compgen -W "create version" -- "$cur") )
+        return
+      fi
+      COMPREPLY=( $(compgen -W "--timeout --accelerator --with-datasets --dataset-action --public-datasets --no-public-datasets --json" -- "$cur") )
       ;;
     submit)
       COMPREPLY=( $(compgen -W "--file --kernel --version --message --json" -- "$cur") )

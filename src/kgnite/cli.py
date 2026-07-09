@@ -41,15 +41,23 @@ except (ImportError, ModuleNotFoundError) as exc:
 from kgnite.features import (
     choose_preview_file,
     create_competition_workspace,
+    create_project_workspace,
     filter_resource_rows,
     load_score_history,
     merge_score_history,
+    next_competition_notebook_path,
+    kaggle_notebook_slug,
     normalize_scores,
+    notebook_title_from_slug,
     preview_local_file,
+    prepare_kaggle_notebook_bundle,
+    prepare_local_dataset_bundle,
     save_score_history,
     score_sparkline,
     write_starter_notebook,
+    write_workspace_help,
 )
+from kgnite.settings import load_settings, save_settings, workspace_subdir
 
 APP_NAME = "kgnite"
 USAGE_TEXT = """\
@@ -62,10 +70,12 @@ Common workflows:
   kgnite download dataset zillow/zecon --output-dir ./downloads
   kgnite preview dataset zillow/zecon --rows 10
   kgnite pull-notebook owner/notebook --output-dir ./notebooks
+  kgnite prepare-notebook ./titanic/notebooks/titanic-01.ipynb --title "Titanic Random Forest" --competition titanic --public
+  kgnite push-notebook ./titanic/kaggle-notebooks/titanic-random-forest
   kgnite submit titanic --file ./submission.csv --message "baseline"
   kgnite leaderboard titanic --show
   kgnite setup titanic --directory ./titanic
-  kgnite template titanic --output ./titanic/notebooks/starter.ipynb
+  kgnite template titanic --output ./titanic/notebooks/titanic-02.ipynb
   kgnite performance titanic --sync
   kgnite trending datasets --tag tabular
   kgnite web
@@ -321,7 +331,7 @@ def bash_completion_script() -> str:
           local cur prev words cword
           _init_completion || return
 
-          local commands="usage doctor completions search setup template performance trending web info files download preview pull-notebook submit leaderboard submissions upload-dataset upload-model browse"
+          local commands="usage doctor completions settings create-project workspace-help search setup template performance trending web info files download preview pull-notebook prepare-notebook push-notebook submit leaderboard submissions upload-dataset upload-model browse"
           local resources_plural="datasets competitions kernels models"
           local resources_singular="dataset competition notebook model"
           local download_resources="dataset competition model notebook-output"
@@ -335,6 +345,19 @@ def bash_completion_script() -> str:
           case "${words[1]}" in
             completions)
               COMPREPLY=( $(compgen -W "--shell --print" -- "$cur") )
+              ;;
+            settings)
+              COMPREPLY=( $(compgen -W "--workspace-dir --competitions-dir --projects-dir --kaggle-username --default-dataset-license --json" -- "$cur") )
+              ;;
+            create-project)
+              COMPREPLY=( $(compgen -W "--directory --participant --dataset-source --kernel-source --model-source --template --no-template --force --json" -- "$cur") )
+              ;;
+            workspace-help)
+              if [[ "$prev" == "--type" ]]; then
+                COMPREPLY=( $(compgen -W "competition project" -- "$cur") )
+                return
+              fi
+              COMPREPLY=( $(compgen -W "--type --directory --json" -- "$cur") )
               ;;
             search)
               if [[ $cword -eq 2 ]]; then
@@ -385,6 +408,16 @@ def bash_completion_script() -> str:
             pull-notebook)
               COMPREPLY=( $(compgen -W "--output-dir --json" -- "$cur") )
               ;;
+            prepare-notebook)
+              COMPREPLY=( $(compgen -W "--handle --competition --dataset-source --competition-source --kernel-source --model-source --local-dataset --dataset-handle --dataset-title --dataset-license --title --output-dir --public --enable-internet --enable-gpu --force --json" -- "$cur") )
+              ;;
+            push-notebook)
+              if [[ "$prev" == "--dataset-action" ]]; then
+                COMPREPLY=( $(compgen -W "create version" -- "$cur") )
+                return
+              fi
+              COMPREPLY=( $(compgen -W "--timeout --accelerator --with-datasets --dataset-action --public-datasets --no-public-datasets --json" -- "$cur") )
+              ;;
             submit)
               COMPREPLY=( $(compgen -W "--file --kernel --version --message --json" -- "$cur") )
               ;;
@@ -429,6 +462,9 @@ def zsh_completion_script() -> str:
           'usage:Show example workflows'
           'doctor:Inspect auth and runtime state'
           'completions:Install or print shell completions'
+          'settings:Show or update persistent settings'
+          'create-project:Create a generic Kaggle-ready project'
+          'workspace-help:Create or refresh a workspace guide'
           'search:Search Kaggle resources'
           'setup:Create a competition workspace'
           'template:Generate a starter notebook'
@@ -440,6 +476,8 @@ def zsh_completion_script() -> str:
           'download:Download Kaggle assets'
           'preview:Preview rows from a dataset file'
           'pull-notebook:Pull notebook source'
+          'prepare-notebook:Prepare a Kaggle Notebook upload bundle'
+          'push-notebook:Create or update a prepared Kaggle Notebook'
           'submit:Submit competition result'
           'leaderboard:Show or download competition leaderboard'
           'submissions:List competition submissions'
@@ -463,6 +501,15 @@ def zsh_completion_script() -> str:
         case "${words[2]}" in
           completions)
             _arguments '--shell[Shell]:shell:(bash zsh)' '--print[Print script]'
+            ;;
+          settings)
+            _arguments '--workspace-dir[Workspace root]:folder:_files -/' '--competitions-dir[Competitions folder]:folder:' '--projects-dir[Projects folder]:folder:' '--kaggle-username[Kaggle username]:username:' '--default-dataset-license[Default dataset license]:license:' '--json[Print JSON]'
+            ;;
+          create-project)
+            _arguments '--directory[Project directory]:folder:_files -/' '--participant[Participant name]:name:' '*--dataset-source[Kaggle dataset source]:handle:' '*--kernel-source[Kaggle notebook source]:handle:' '*--model-source[Kaggle model source]:handle:' '--template[Generate starter notebook]' '--no-template[Skip starter notebook]' '--force[Replace generated files]' '--json[Print JSON]'
+            ;;
+          workspace-help)
+            _arguments '--type[Workspace type]:type:(competition project)' '--directory[Workspace directory]:folder:_files -/' '--json[Print JSON]'
             ;;
           search)
             if (( CURRENT == 3 )); then
@@ -512,6 +559,12 @@ def zsh_completion_script() -> str:
             ;;
           pull-notebook)
             _arguments '--output-dir[Destination]:folder:_files -/' '--json[Print JSON]'
+            ;;
+          prepare-notebook)
+            _arguments '--handle[Kaggle notebook owner/slug]:handle:' '--competition[Linked competition slug]:competition:' '*--dataset-source[Kaggle dataset source]:handle:' '*--competition-source[Kaggle competition source]:slug:' '*--kernel-source[Kaggle notebook source]:handle:' '*--model-source[Kaggle model source]:handle:' '--local-dataset[Local dataset directory]:folder:_files -/' '--dataset-handle[Kaggle dataset handle]:handle:' '--dataset-title[Dataset title]:title:' '--dataset-license[Dataset license]:license:' '--title[Notebook title]:title:' '--output-dir[Bundle destination]:folder:_files -/' '--public[Prepare public notebook]' '--enable-internet[Enable internet]' '--enable-gpu[Enable GPU]' '--force[Replace prepared bundle]' '--json[Print JSON]'
+            ;;
+          push-notebook)
+            _arguments '--timeout[Timeout seconds]:seconds:' '--accelerator[Accelerator]:accelerator:' '--with-datasets[Push staged local datasets first]' '--dataset-action[Dataset action]:action:(create version)' '--public-datasets[Create staged datasets as public]' '--no-public-datasets[Create staged datasets as private]' '--json[Print JSON]'
             ;;
           submit)
             _arguments '--file[Submission file]:file:_files' '--kernel[Notebook handle]:kernel:' '--version[Notebook version]:version:' '--message[Submission message]:message:' '--json[Print JSON]'
@@ -807,7 +860,7 @@ def command_setup(args: argparse.Namespace) -> int:
     competition = args.competition or prompt("Competition slug")
     if not competition:
         raise KgniteError("A competition slug is required.")
-    directory = Path(args.directory or competition)
+    directory = Path(args.directory) if args.directory else workspace_subdir("competition", competition)
     metric = args.metric or (
         "publicScore" if args.json else prompt("Score metric", default="publicScore")
     )
@@ -870,7 +923,7 @@ def command_setup(args: argparse.Namespace) -> int:
         try:
             notebook = write_starter_notebook(
                 competition,
-                directory / "notebooks" / "starter.ipynb",
+                directory / "notebooks" / f"{competition}-01.ipynb",
                 directory / "data",
                 participant=participant,
                 competition_notes=notes,
@@ -892,7 +945,11 @@ def command_setup(args: argparse.Namespace) -> int:
 
 
 def command_template(args: argparse.Namespace) -> int:
-    output = Path(args.output or f"{args.competition}-starter.ipynb")
+    output = (
+        Path(args.output)
+        if args.output
+        else next_competition_notebook_path(Path.cwd(), args.competition)
+    )
     participant = (
         args.participant or os.environ.get("KGNITE_PARTICIPANT") or getpass.getuser()
     )
@@ -1378,6 +1435,195 @@ def command_pull_notebook(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_settings(args: argparse.Namespace) -> int:
+    updates = {
+        "workspace_dir": args.workspace_dir,
+        "competitions_dir": args.competitions_dir,
+        "projects_dir": args.projects_dir,
+        "kaggle_username": args.kaggle_username,
+        "default_dataset_license": args.default_dataset_license,
+    }
+    try:
+        payload = save_settings(updates) if any(value is not None for value in updates.values()) else load_settings()
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise KgniteError(f"Could not update settings: {exc}") from exc
+    print_json(payload)
+    return 0
+
+
+def command_create_project(args: argparse.Namespace) -> int:
+    directory = Path(args.directory) if args.directory else workspace_subdir("project", args.name)
+    try:
+        payload = create_project_workspace(
+            args.name,
+            directory,
+            dataset_sources=args.dataset_source,
+            kernel_sources=args.kernel_source,
+            model_sources=args.model_source,
+            force=args.force,
+        )
+        if args.template:
+            notebook = write_starter_notebook(
+                args.name,
+                directory / "notebooks" / f"{args.name}-01.ipynb",
+                directory / "data",
+                participant=args.participant or getpass.getuser(),
+                kaggle_data_sources=args.dataset_source or [],
+                force=args.force,
+            )
+            payload["notebook"] = str(notebook)
+    except (ValueError, FileExistsError) as exc:
+        raise KgniteError(str(exc)) from exc
+    print_json(payload)
+    return 0
+
+
+def command_workspace_help(args: argparse.Namespace) -> int:
+    directory = (
+        Path(args.directory)
+        if args.directory
+        else workspace_subdir(args.type, args.name)
+    ).expanduser().resolve()
+    if not directory.is_dir():
+        raise KgniteError(f"Workspace directory was not found: {directory}")
+    path = write_workspace_help(directory, args.name, project_type=args.type)
+    print_json({"workspace": str(directory), "help": str(path), "type": args.type})
+    return 0
+
+
+def command_prepare_notebook(args: argparse.Namespace) -> int:
+    notebook = Path(args.notebook).expanduser().resolve()
+    settings = load_settings()
+    handle_input = (args.handle or "").strip()
+    title = (args.title or "").strip()
+    notices = []
+    try:
+        if title:
+            slug = kaggle_notebook_slug(title)
+        elif handle_input:
+            handle_parts = [part for part in handle_input.split("/") if part]
+            if len(handle_parts) < 2:
+                raise KgniteError("Notebook handle must be `owner/notebook-slug`.")
+            title = notebook_title_from_slug(handle_parts[1])
+            slug = kaggle_notebook_slug(title)
+        else:
+            title = notebook.stem.replace("-", " ").replace("_", " ").title()
+            slug = kaggle_notebook_slug(title)
+    except ValueError as exc:
+        raise KgniteError(str(exc)) from exc
+    if handle_input:
+        owner = handle_input.split("/", 1)[0]
+        handle_slug = handle_input.split("/", 1)[1] if "/" in handle_input else ""
+        handle = f"{owner}/{slug}"
+        if handle_slug and handle_slug != slug:
+            notices.append(
+                f"Adjusted notebook handle to {handle} so the slug matches the title."
+            )
+    else:
+        owner = str(settings.get("kaggle_username") or "").strip()
+        if not owner:
+            raise KgniteError(
+                "--handle is required when settings kaggle_username is empty."
+            )
+        handle = f"{owner}/{slug}"
+        notices.append(f"Derived notebook handle from title: {handle}")
+    validate_resource_handle("notebook", handle)
+    project_dir = notebook.parent.parent if notebook.parent.name == "notebooks" else notebook.parent
+    output_dir = Path(args.output_dir) if args.output_dir else project_dir / "kaggle-notebooks" / slug
+    dataset_sources = list(args.dataset_source or [])
+    competition_sources = list(args.competition_source or [])
+    if args.competition and args.competition not in competition_sources:
+        competition_sources.append(args.competition)
+    local_dataset_payload = None
+    try:
+        if args.local_dataset:
+            if not args.dataset_handle:
+                raise ValueError("--dataset-handle is required with --local-dataset.")
+            validate_resource_handle("dataset", args.dataset_handle)
+            if args.dataset_handle not in dataset_sources:
+                dataset_sources.append(args.dataset_handle)
+            dataset_slug = args.dataset_handle.split("/", 1)[1]
+            dataset_output = project_dir / "kaggle-datasets" / dataset_slug
+            local_dataset_payload = prepare_local_dataset_bundle(
+                Path(args.local_dataset),
+                dataset_output,
+                handle=args.dataset_handle,
+                title=args.dataset_title or dataset_slug.replace("-", " ").title(),
+                license_name=args.dataset_license or settings["default_dataset_license"],
+                force=args.force,
+            )
+        payload = prepare_kaggle_notebook_bundle(
+            notebook,
+            output_dir,
+            handle=handle,
+            title=title,
+            competition=args.competition,
+            dataset_sources=dataset_sources,
+            competition_sources=competition_sources,
+            kernel_sources=args.kernel_source,
+            model_sources=args.model_source,
+            public=args.public,
+            enable_internet=args.enable_internet,
+            enable_gpu=args.enable_gpu,
+            force=args.force,
+        )
+        if local_dataset_payload:
+            payload["local_dataset"] = local_dataset_payload
+            payload["push_command"] += " --with-datasets"
+        if notices:
+            payload["notices"] = notices
+    except (ValueError, FileExistsError) as exc:
+        raise KgniteError(str(exc)) from exc
+    print_json(payload)
+    return 0
+
+
+def command_push_notebook(args: argparse.Namespace) -> int:
+    bundle_dir = Path(args.bundle_dir).expanduser().resolve()
+    metadata = bundle_dir / "kernel-metadata.json"
+    if not metadata.is_file():
+        raise KgniteError(f"Kaggle notebook metadata was not found: {metadata}")
+    pushed_datasets = []
+    if args.with_datasets:
+        try:
+            notebook_metadata = json.loads(metadata.read_text())
+        except json.JSONDecodeError as exc:
+            raise KgniteError(f"Invalid Kaggle notebook metadata: {metadata}") from exc
+        project_dir = bundle_dir.parent.parent
+        dataset_root = project_dir / "kaggle-datasets"
+        wanted = set(notebook_metadata.get("dataset_sources", []))
+        if dataset_root.is_dir():
+            for dataset_metadata in sorted(dataset_root.glob("*/dataset-metadata.json")):
+                details = json.loads(dataset_metadata.read_text())
+                if details.get("id") not in wanted:
+                    continue
+                dataset_command = [
+                    "datasets",
+                    args.dataset_action,
+                    "--path",
+                    str(dataset_metadata.parent),
+                ]
+                if args.dataset_action == "create" and args.public_datasets:
+                    dataset_command.append("--public")
+                dataset_result = run_kaggle(dataset_command)
+                pushed_datasets.append(
+                    {
+                        "handle": details["id"],
+                        "bundle_dir": str(dataset_metadata.parent),
+                        "result": (dataset_result.stdout or dataset_result.stderr).strip(),
+                    }
+                )
+    command = ["kernels", "push", "--path", str(bundle_dir)]
+    if args.timeout:
+        command += ["--timeout", str(args.timeout)]
+    if args.accelerator:
+        command += ["--accelerator", args.accelerator]
+    result = run_kaggle(command)
+    payload = {"bundle_dir": str(bundle_dir), "datasets": pushed_datasets, "result": (result.stdout or result.stderr).strip()}
+    print_json(payload) if args.json else print(payload["result"])
+    return 0
+
+
 def command_submit(args: argparse.Namespace) -> int:
     if not args.file and not args.kernel:
         raise KgniteError(
@@ -1853,6 +2099,44 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_output_flags(doctor_parser)
     doctor_parser.set_defaults(func=command_doctor)
 
+    settings_parser = subparsers.add_parser(
+        "settings", help="Show or update persistent kgnite settings."
+    )
+    settings_parser.add_argument("--workspace-dir")
+    settings_parser.add_argument("--competitions-dir")
+    settings_parser.add_argument("--projects-dir")
+    settings_parser.add_argument("--kaggle-username")
+    settings_parser.add_argument("--default-dataset-license")
+    add_common_output_flags(settings_parser)
+    settings_parser.set_defaults(func=command_settings)
+
+    project_parser = subparsers.add_parser(
+        "create-project", help="Create a generic Kaggle-ready project workspace."
+    )
+    project_parser.add_argument("name")
+    project_parser.add_argument("--directory")
+    project_parser.add_argument("--participant")
+    project_parser.add_argument("--dataset-source", action="append")
+    project_parser.add_argument("--kernel-source", action="append")
+    project_parser.add_argument("--model-source", action="append")
+    project_parser.add_argument(
+        "--template", action=argparse.BooleanOptionalAction, default=True
+    )
+    project_parser.add_argument("--force", action="store_true")
+    add_common_output_flags(project_parser)
+    project_parser.set_defaults(func=command_create_project)
+
+    workspace_help_parser = subparsers.add_parser(
+        "workspace-help", help="Create or refresh a workspace README.md guide."
+    )
+    workspace_help_parser.add_argument("name")
+    workspace_help_parser.add_argument(
+        "--type", choices=["competition", "project"], required=True
+    )
+    workspace_help_parser.add_argument("--directory")
+    add_common_output_flags(workspace_help_parser)
+    workspace_help_parser.set_defaults(func=command_workspace_help)
+
     search_parser = subparsers.add_parser("search", help="Search Kaggle resources.")
     search_parser.add_argument(
         "resource", choices=["datasets", "competitions", "kernels", "models"]
@@ -1930,7 +2214,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     template_parser.add_argument("competition", help="Kaggle competition slug.")
     template_parser.add_argument(
-        "--output", help="Notebook path. Defaults to <competition>-starter.ipynb."
+        "--output",
+        help="Notebook path. Defaults to the next available <competition>-NN.ipynb.",
     )
     template_parser.add_argument(
         "--data-dir",
@@ -2103,6 +2388,62 @@ def build_parser() -> argparse.ArgumentParser:
     pull_parser.add_argument("--output-dir")
     add_common_output_flags(pull_parser)
     pull_parser.set_defaults(func=command_pull_notebook)
+
+    prepare_notebook_parser = subparsers.add_parser(
+        "prepare-notebook",
+        help="Prepare a project-local Kaggle Notebook upload bundle.",
+    )
+    prepare_notebook_parser.add_argument("notebook", help="Local .ipynb file.")
+    prepare_notebook_parser.add_argument(
+        "--handle",
+        help=(
+            "Kaggle notebook owner/slug. If --title is also supplied, the slug is "
+            "derived from the title and this value only supplies the owner."
+        ),
+    )
+    prepare_notebook_parser.add_argument("--competition", help="Linked competition slug.")
+    prepare_notebook_parser.add_argument("--dataset-source", action="append")
+    prepare_notebook_parser.add_argument("--competition-source", action="append")
+    prepare_notebook_parser.add_argument("--kernel-source", action="append")
+    prepare_notebook_parser.add_argument("--model-source", action="append")
+    prepare_notebook_parser.add_argument("--local-dataset")
+    prepare_notebook_parser.add_argument("--dataset-handle")
+    prepare_notebook_parser.add_argument("--dataset-title")
+    prepare_notebook_parser.add_argument("--dataset-license")
+    prepare_notebook_parser.add_argument(
+        "--title",
+        help=(
+            "Public notebook title. If --handle is omitted, the handle is derived "
+            "from this title and the configured Kaggle username."
+        ),
+    )
+    prepare_notebook_parser.add_argument("--output-dir", help="Bundle destination.")
+    prepare_notebook_parser.add_argument(
+        "--public", action="store_true", help="Prepare a public notebook."
+    )
+    prepare_notebook_parser.add_argument("--enable-internet", action="store_true")
+    prepare_notebook_parser.add_argument("--enable-gpu", action="store_true")
+    prepare_notebook_parser.add_argument("--force", action="store_true")
+    add_common_output_flags(prepare_notebook_parser)
+    prepare_notebook_parser.set_defaults(func=command_prepare_notebook)
+
+    push_notebook_parser = subparsers.add_parser(
+        "push-notebook", help="Create or update a prepared Kaggle Notebook."
+    )
+    push_notebook_parser.add_argument("bundle_dir")
+    push_notebook_parser.add_argument("--timeout", type=int)
+    push_notebook_parser.add_argument("--accelerator")
+    push_notebook_parser.add_argument(
+        "--with-datasets", action="store_true", help="Push matching staged local datasets first."
+    )
+    push_notebook_parser.add_argument(
+        "--dataset-action", choices=["create", "version"], default="create"
+    )
+    push_notebook_parser.add_argument(
+        "--public-datasets", action=argparse.BooleanOptionalAction, default=True
+    )
+    add_common_output_flags(push_notebook_parser)
+    push_notebook_parser.set_defaults(func=command_push_notebook)
 
     submit_parser = subparsers.add_parser(
         "submit", help="Submit a file or notebook run to a Kaggle competition."

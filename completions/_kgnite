@@ -4,6 +4,10 @@ local -a commands
 commands=(
   'usage:Show example workflows'
   'doctor:Inspect auth and runtime state'
+  'completions:Install or print shell completions'
+  'settings:Show or update persistent settings'
+  'create-project:Create a generic Kaggle-ready project'
+  'workspace-help:Create or refresh a workspace guide'
   'search:Search Kaggle resources'
   'setup:Create a competition workspace'
   'template:Generate a starter notebook'
@@ -15,6 +19,8 @@ commands=(
   'download:Download Kaggle assets'
   'preview:Preview rows from a dataset file'
   'pull-notebook:Pull notebook source'
+  'prepare-notebook:Prepare a Kaggle Notebook upload bundle'
+  'push-notebook:Create or update a prepared Kaggle Notebook'
   'submit:Submit competition result'
   'leaderboard:Show or download competition leaderboard'
   'submissions:List competition submissions'
@@ -36,6 +42,36 @@ case $CURRENT in
 esac
 
 case "${words[2]}" in
+  completions)
+    _arguments '--shell[Shell]:shell:(bash zsh)' '--print[Print script]'
+    ;;
+  settings)
+    _arguments \
+      '--workspace-dir[Workspace root]:folder:_files -/' \
+      '--competitions-dir[Competitions folder]:folder:' \
+      '--projects-dir[Projects folder]:folder:' \
+      '--kaggle-username[Kaggle username]:username:' \
+      '--default-dataset-license[Default dataset license]:license:' \
+      '--json[Print JSON]'
+    ;;
+  create-project)
+    _arguments \
+      '--directory[Project directory]:folder:_files -/' \
+      '--participant[Participant name]:name:' \
+      '*--dataset-source[Kaggle dataset source]:handle:' \
+      '*--kernel-source[Kaggle notebook source]:handle:' \
+      '*--model-source[Kaggle model source]:handle:' \
+      '--template[Generate starter notebook]' \
+      '--no-template[Skip starter notebook]' \
+      '--force[Replace generated files]' \
+      '--json[Print JSON]'
+    ;;
+  workspace-help)
+    _arguments \
+      '--type[Workspace type]:type:(competition project)' \
+      '--directory[Workspace directory]:folder:_files -/' \
+      '--json[Print JSON]'
+    ;;
   search)
     if (( CURRENT == 3 )); then
       _values 'resource' $plural_resources
@@ -107,6 +143,36 @@ case "${words[2]}" in
   pull-notebook)
     _arguments \
       '--output-dir[Destination folder]:folder:_files -/' \
+      '--json[Print JSON]'
+    ;;
+  prepare-notebook)
+    _arguments \
+      '--handle[Kaggle notebook owner/slug]:handle:' \
+      '--competition[Linked competition slug]:competition:' \
+      '*--dataset-source[Kaggle dataset source]:handle:' \
+      '*--competition-source[Kaggle competition source]:slug:' \
+      '*--kernel-source[Kaggle notebook source]:handle:' \
+      '*--model-source[Kaggle model source]:handle:' \
+      '--local-dataset[Local dataset directory]:folder:_files -/' \
+      '--dataset-handle[Kaggle dataset handle]:handle:' \
+      '--dataset-title[Dataset title]:title:' \
+      '--dataset-license[Dataset license]:license:' \
+      '--title[Notebook title]:title:' \
+      '--output-dir[Bundle destination]:folder:_files -/' \
+      '--public[Prepare public notebook]' \
+      '--enable-internet[Enable internet]' \
+      '--enable-gpu[Enable GPU]' \
+      '--force[Replace prepared bundle]' \
+      '--json[Print JSON]'
+    ;;
+  push-notebook)
+    _arguments \
+      '--timeout[Timeout seconds]:seconds:' \
+      '--accelerator[Accelerator]:accelerator:' \
+      '--with-datasets[Push staged local datasets first]' \
+      '--dataset-action[Dataset action]:action:(create version)' \
+      '--public-datasets[Create staged datasets as public]' \
+      '--no-public-datasets[Create staged datasets as private]' \
       '--json[Print JSON]'
     ;;
   submit)

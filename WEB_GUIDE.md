@@ -88,9 +88,13 @@ Limit: 20
 
 ## Competition page
 
+The **Settings** page controls the persistent workspace root, competition and project subfolders, Kaggle username, and default dataset license. The **Projects** page creates generic Kaggle-ready projects with dataset, notebook, and model sources.
+
+Each generated workspace includes its own `README.md`. Use it as the workspace-specific reference for folder purpose, commands, web actions, publishing, and troubleshooting.
+
 ### Set up a competition
 
-The setup workflow creates `.kgnite.json` plus `data`, `notebooks`, and `submissions` directories.
+The setup workflow creates `.<competition-slug>-config.json` plus `data`, `notebooks`, and `submissions` directories.
 
 ```text
 Competition: titanic
@@ -100,6 +104,8 @@ Lower score is better: unchecked
 Download data: checked
 Generate notebook: checked
 ```
+
+Competition data download is enabled by default. Clear it only when you intentionally want an empty local `data/` directory and plan to run solely against Kaggle-mounted data.
 
 Select **Replace an existing generated workspace** only when overwriting generated files is intentional.
 
@@ -111,7 +117,7 @@ Generate a standalone starter notebook for an existing competition directory:
 Competition: titanic
 Participant: Your Name
 Data directory: ./titanic/data
-Output notebook: ./titanic/notebooks/starter.ipynb
+Output notebook: ./titanic/notebooks/titanic-02.ipynb
 Include official competition notes: checked
 Notes pages: data-description, evaluation
 ```
@@ -132,7 +138,7 @@ Clear **Sync from Kaggle** to view existing local history without making a netwo
 
 ### Submit results
 
-For a file-based competition, provide a submission file and leave notebook fields empty:
+For a file-based competition, enter the submission path or use the optional file picker, then leave notebook fields empty. Picked files use session-scoped temporary storage that is removed when the web session ends:
 
 ```text
 Competition: titanic
@@ -150,6 +156,12 @@ Message: notebook version 3
 ```
 
 The browser asks for confirmation before sending a submission.
+
+### Prepare and publish a showcase notebook
+
+On **Uploads**, use **Prepare Kaggle notebook** to copy an `.ipynb` into a project-local `kaggle-notebooks/<slug>` bundle and generate `kernel-metadata.json`. Enter the notebook title; kgnite derives the Kaggle slug from that title so the metadata ID matches Kaggle's URL behavior. Add a Kaggle handle only when you need to choose a different owner. Preparation is local only. Review the bundle, then use **Push Kaggle notebook**; publishing requires a separate confirmation.
+
+The preparation form supports `dataset_sources`, `competition_sources`, `kernel_sources`, and `model_sources`. Supplying a local dataset directory plus a Kaggle dataset handle also creates a `kaggle-datasets/<slug>` bundle. On push, select **Push staged local datasets first**; choose **version** instead of **create** after that dataset already exists on Kaggle.
 
 ## Resources page
 
@@ -248,6 +260,14 @@ Leave the handle empty and select `create` or `update` for Kaggle CLI metadata m
 - **Usage guide** displays built-in CLI workflow examples.
 - **Shell completion script** safely prints Bash or Zsh completion definitions. It does not modify shell files from the browser.
 - The CLI `browse` workflow is represented by the browser-native Discover and Resources pages.
+
+To install or refresh completions on the current workstation, run this in a terminal:
+
+```bash
+kgnite completions
+```
+
+Run it again after upgrading or reinstalling `kgnite`; it rewrites the completion file under `~/.local/share/kgnite/completions` and prints the line to add to `~/.zshrc` or `~/.bashrc`. On another workstation, install or update `kgnite` there first, then run the same command.
 
 ## Advanced page
 

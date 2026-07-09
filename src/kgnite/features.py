@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import ast
 import csv
 import html
 import json
 import math
+import re
+import shutil
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from html.parser import HTMLParser
 from typing import Any, Iterable
 
 
-CONFIG_NAME = ".kgnite.json"
 SCORE_KEYS = ("publicScore", "privateScore", "score")
 DATE_KEYS = ("date", "submittedAt", "submissionDate", "createdAt")
 PREVIEWABLE_SUFFIXES = {".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".txt"}
@@ -41,6 +44,162 @@ SAFE_NOTE_TAGS = {
     "tr",
     "ul",
 }
+
+
+def kaggle_notebook_slug(title: str) -> str:
+    normalized = unicodedata.normalize("NFKD", title)
+    ascii_title = normalized.encode("ascii", "ignore").decode("ascii").casefold()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_title).strip("-")
+    slug = re.sub(r"-+", "-", slug)
+    if not slug:
+        raise ValueError("Notebook title must contain at least one letter or number.")
+    if len(slug) < 5:
+        raise ValueError(
+            "Kaggle notebook slug derived from title must be at least five characters."
+        )
+    return slug
+
+
+def notebook_title_from_slug(slug: str) -> str:
+    words = [word for word in re.split(r"[-_]+", slug.strip()) if word]
+    return " ".join(word.capitalize() for word in words) or slug
+
+
+def workspace_help(name: str, *, project_type: str) -> str:
+    config_name = f".{name}-config.json"
+    common = f"""# {name} workspace
+
+This workspace is managed with kgnite. Run commands from this directory unless a command uses an absolute path.
+
+## Folder and file guide
+
+| Path | Purpose |
+|---|---|
+| `{config_name}` | Workspace settings and Kaggle source references. This is a hidden file. |
+| `data/` | Local training, test, reference, or generated data. Do not assume these files exist on Kaggle. |
+| `notebooks/` | Editable local notebooks. Numbered names such as `{name}-01.ipynb` preserve experiments. |
+| `submissions/` | Competition submission CSV or ZIP files. |
+| `kaggle-notebooks/` | Prepared notebook bundles containing `kernel-metadata.json`. |
+| `kaggle-datasets/` | Prepared local dataset bundles containing `dataset-metadata.json`. |
+| `README.md` | This reference guide. |
+
+## Local and Kaggle data paths
+
+kgnite-generated notebooks use local `data/` while running on this workstation. Prepared copies resolve configured Kaggle sources under `/kaggle/input/<source-slug>` when running on Kaggle.
+
+The four source lists written to `kernel-metadata.json` are:
+
+- `dataset_sources`: Kaggle datasets, including staged local datasets after upload.
+- `competition_sources`: competition datasets such as `{name}`.
+- `kernel_sources`: other Kaggle notebooks used as inputs.
+- `model_sources`: Kaggle model handles used by the notebook.
+
+## Notebook workflow
+
+Create another numbered notebook:
+
+```bash
+kgnite template {name} --data-dir ./data --no-competition-notes
+```
+
+Prepare a notebook for your Kaggle profile:
+
+```bash
+kgnite prepare-notebook ./notebooks/{name}-01.ipynb \\
+  --title "{name.replace('-', ' ').title()} Notebook" \\
+  --competition {name} \\
+  --public
+```
+
+Review `kaggle-notebooks/<notebook-slug>/kernel-metadata.json`, then publish:
+
+```bash
+kgnite push-notebook ./kaggle-notebooks/<notebook-slug>
+```
+
+For a staged local dataset, publish it before the notebook automatically:
+
+```bash
+kgnite push-notebook ./kaggle-notebooks/<notebook-slug> --with-datasets
+```
+
+Use `--dataset-action version` when that dataset already exists on Kaggle.
+
+## Web application
+
+```bash
+kgnite web
+```
+
+- **Competition**: download data, generate notebooks, submit results, and track scores.
+- **Projects**: create generic Kaggle-ready workspaces.
+- **Uploads**: prepare or push notebooks and datasets.
+- **Settings**: change the root workspace, folder names, username, and dataset license.
+- **Resources**: inspect or download Kaggle datasets, competitions, notebooks, and models.
+
+The web header shows the directory used to resolve relative paths. Publishing and submission actions require confirmation.
+
+## Troubleshooting
+
+- Empty `data/`: run `kgnite download competition {name} --output-dir ./data`.
+- Competition notes return 403: generate with `--no-competition-notes`.
+- Kaggle cannot find data: check the source arrays in `kernel-metadata.json` and confirm the dataset was uploaded before the notebook.
+- Existing local dataset: use `--dataset-action version` rather than `create`.
+- Show hidden config files: run `ls -la` or `tree -a`.
+"""
+    if project_type == "competition":
+        return common + f"""
+
+## Competition actions
+
+Download or refresh competition data:
+
+```bash
+kgnite download competition {name} --output-dir ./data --force
+```
+
+Submit a prepared result:
+
+```bash
+kgnite submit {name} --file ./submissions/submission.csv --message "experiment description"
+```
+
+Review submissions and performance:
+
+```bash
+kgnite submissions {name}
+kgnite performance {name} --sync
+```
+"""
+    return common + """
+
+## Generic project actions
+
+Add Kaggle sources while preparing a notebook with repeatable options:
+
+```bash
+kgnite prepare-notebook ./notebooks/<notebook>.ipynb \\
+  --title "<Notebook Title>" \\
+  --dataset-source <owner/dataset> \\
+  --kernel-source <owner/notebook> \\
+  --model-source <owner/model/framework/variation>
+```
+
+Stage local project data as a Kaggle dataset:
+
+```bash
+kgnite prepare-notebook ./notebooks/<notebook>.ipynb \\
+  --title "<Notebook Title>" \\
+  --local-dataset ./data \\
+  --dataset-handle <kaggle-username>/<dataset-slug>
+```
+"""
+
+
+def write_workspace_help(directory: Path, name: str, *, project_type: str) -> Path:
+    path = directory / "README.md"
+    path.write_text(workspace_help(name, project_type=project_type))
+    return path
 
 
 class CompetitionNotesSanitizer(HTMLParser):
@@ -245,10 +404,10 @@ def create_competition_workspace(
     force: bool = False,
 ) -> dict[str, Any]:
     directory = directory.expanduser().resolve()
-    config_path = directory / CONFIG_NAME
+    config_path = directory / f".{competition}-config.json"
     if config_path.exists() and not force:
         raise FileExistsError(f"Workspace already exists: {config_path}")
-    for child in ("data", "notebooks", "submissions"):
+    for child in ("data", "notebooks", "submissions", "kaggle-notebooks", "kaggle-datasets"):
         (directory / child).mkdir(parents=True, exist_ok=True)
     config = {
         "competition": competition,
@@ -258,18 +417,287 @@ def create_competition_workspace(
         "data_dir": "data",
         "notebook_dir": "notebooks",
         "submission_dir": "submissions",
+        "dataset_sources": [],
+        "competition_sources": [competition],
+        "kernel_sources": [],
+        "model_sources": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     config_path.write_text(json.dumps(config, indent=2) + "\n")
-    return {"directory": str(directory), "config": str(config_path), **config}
+    help_path = write_workspace_help(directory, competition, project_type="competition")
+    return {
+        "directory": str(directory),
+        "config": str(config_path),
+        "help": str(help_path),
+        **config,
+    }
 
 
 def discover_sample_columns(data_dir: Path) -> list[str]:
-    candidates = sorted(data_dir.glob("**/*sample*submission*.csv"))
+    candidates = sorted(data_dir.glob("**/*submission*.csv"))
     if not candidates:
         return []
     with candidates[0].open(newline="", encoding="utf-8-sig") as handle:
         return next(csv.reader(handle), [])
+
+
+def next_competition_notebook_path(directory: Path, competition: str) -> Path:
+    """Return the first available numbered notebook path for a competition."""
+    directory = directory.expanduser()
+    sequence = 1
+    while True:
+        candidate = directory / f"{competition}-{sequence:02d}.ipynb"
+        if not candidate.exists():
+            return candidate
+        sequence += 1
+
+
+def portable_data_setup_source(
+    config_name: str, data_dir: str, kaggle_slugs: list[str]
+) -> list[str]:
+    kaggle_paths = [f"/kaggle/input/{slug}" for slug in kaggle_slugs]
+    return [
+        "from pathlib import Path\n",
+        "import json\n",
+        "import pandas as pd\n",
+        "\n",
+        "KAGGLE_INPUT_ROOT = Path('/kaggle/input')\n",
+        f"KAGGLE_DATA_DIRS = {kaggle_paths!r}\n",
+        "KAGGLE_DATA_DIR = next((Path(path) for path in KAGGLE_DATA_DIRS if Path(path).is_dir()), None)\n",
+        "WORKSPACE_CONFIG = next(\n",
+        f"    (directory / {config_name!r} for directory in (Path.cwd(), *Path.cwd().parents)\n",
+        f"     if (directory / {config_name!r}).is_file()),\n",
+        "    None,\n",
+        ")\n",
+        "if KAGGLE_INPUT_ROOT.is_dir():\n",
+        "    # Kaggle may mount a source under a path different from its slug.\n",
+        "    # Search the full input root when the configured directory is unavailable.\n",
+        "    DATA_DIR = KAGGLE_DATA_DIR or KAGGLE_INPUT_ROOT\n",
+        "elif WORKSPACE_CONFIG:\n",
+        "    workspace = WORKSPACE_CONFIG.parent\n",
+        "    config = json.loads(WORKSPACE_CONFIG.read_text())\n",
+        "    DATA_DIR = (workspace / config.get('data_dir', 'data')).resolve()\n",
+        "else:\n",
+        f"    DATA_DIR = Path({data_dir!r}).expanduser().resolve()\n",
+        "files = sorted(DATA_DIR.glob('**/*'))\n",
+        "[str(path) for path in files if path.is_file()][:20]\n",
+    ]
+
+
+def prepare_kaggle_notebook_bundle(
+    notebook: Path,
+    output_dir: Path,
+    *,
+    handle: str,
+    title: str,
+    competition: str | None = None,
+    dataset_sources: list[str] | None = None,
+    competition_sources: list[str] | None = None,
+    kernel_sources: list[str] | None = None,
+    model_sources: list[str] | None = None,
+    public: bool = False,
+    enable_internet: bool = False,
+    enable_gpu: bool = False,
+    force: bool = False,
+) -> dict[str, Any]:
+    notebook = notebook.expanduser().resolve()
+    output_dir = output_dir.expanduser().resolve()
+    if not notebook.is_file() or notebook.suffix.casefold() != ".ipynb":
+        raise ValueError(f"Notebook was not found: {notebook}")
+    metadata_path = output_dir / "kernel-metadata.json"
+    copied_notebook = output_dir / notebook.name
+    if (metadata_path.exists() or copied_notebook.exists()) and not force:
+        raise FileExistsError(f"Kaggle notebook bundle already exists: {output_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    copied_notebook.write_bytes(notebook.read_bytes())
+    resolved_competition_sources = list(
+        competition_sources or ([competition] if competition else [])
+    )
+    source_slugs = [
+        source.rsplit("/", 1)[-1]
+        for source in [*(dataset_sources or []), *resolved_competition_sources]
+    ]
+    repairs: list[str] = []
+    try:
+        notebook_payload = json.loads(copied_notebook.read_text())
+        replacement = f"KAGGLE_DATA_DIRS = {[f'/kaggle/input/{slug}' for slug in source_slugs]!r}\n"
+        for cell in notebook_payload.get("cells", []):
+            source = cell.get("source")
+            if isinstance(source, list):
+                cell["source"] = [
+                    replacement if line.startswith("KAGGLE_DATA_DIRS = ") else line
+                    for line in source
+                ]
+        setup_cell = next(
+            (
+                cell
+                for cell in notebook_payload.get("cells", [])
+                if cell.get("id") == "data-setup"
+                and isinstance(cell.get("source"), list)
+            ),
+            None,
+        )
+        if setup_cell is not None:
+            existing_setup = "".join(setup_cell["source"])
+            local_data_dir = "./data"
+            for line in setup_cell["source"]:
+                if "DATA_DIR = Path(" in line and ").expanduser().resolve()" in line:
+                    literal = line.split("DATA_DIR = Path(", 1)[1].split(").expanduser()", 1)[0]
+                    try:
+                        local_data_dir = str(ast.literal_eval(literal))
+                    except (SyntaxError, ValueError):
+                        pass
+                    break
+            config_name = f".{competition}-config.json" if competition else ".project-config.json"
+            marker = "directory / "
+            for line in setup_cell["source"]:
+                if marker in line and "-config.json" in line:
+                    literal = line.split(marker, 1)[1].split(" for directory", 1)[0]
+                    try:
+                        config_name = str(ast.literal_eval(literal))
+                    except (SyntaxError, ValueError):
+                        pass
+                    break
+            setup_cell["source"] = portable_data_setup_source(
+                config_name, local_data_dir, source_slugs
+            )
+            if "KAGGLE_INPUT_ROOT" not in existing_setup:
+                repairs.append(
+                    "Upgraded data setup to discover Kaggle input mounts without falling back to a local path."
+                )
+        all_source = "\n".join(
+            "".join(cell.get("source", []))
+            for cell in notebook_payload.get("cells", [])
+            if isinstance(cell.get("source"), list)
+        )
+        if "find_csv(" in all_source and "def find_csv(" not in all_source:
+            loading_cell = next(
+                (
+                    cell
+                    for cell in notebook_payload.get("cells", [])
+                    if cell.get("id") == "data-loading"
+                    and isinstance(cell.get("source"), list)
+                ),
+                None,
+            )
+            if loading_cell is not None:
+                loading_cell["source"] = [
+                    "def find_csv(fragment):\n",
+                    "    matches = list(DATA_DIR.glob(f'**/*{fragment}*.csv'))\n",
+                    "    return pd.read_csv(matches[0]) if matches else None\n",
+                    "\n",
+                    *loading_cell["source"],
+                ]
+                repairs.append("Restored missing find_csv helper in the data-loading cell.")
+        copied_notebook.write_text(json.dumps(notebook_payload, indent=2) + "\n")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        pass
+    metadata = {
+        "id": handle,
+        "title": title,
+        "code_file": notebook.name,
+        "language": "python",
+        "kernel_type": "notebook",
+        "is_private": str(not public).lower(),
+        "enable_gpu": str(enable_gpu).lower(),
+        "enable_tpu": "false",
+        "enable_internet": str(enable_internet).lower(),
+        "machine_shape": "",
+        "dataset_sources": list(dataset_sources or []),
+        "competition_sources": resolved_competition_sources,
+        "kernel_sources": list(kernel_sources or []),
+        "model_sources": list(model_sources or []),
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
+    return {
+        "bundle_dir": str(output_dir),
+        "notebook": str(copied_notebook),
+        "metadata": str(metadata_path),
+        "handle": handle,
+        "competition": competition,
+        "push_command": f"kgnite push-notebook {output_dir}",
+        "repairs": repairs,
+    }
+
+
+def prepare_local_dataset_bundle(
+    source_dir: Path,
+    output_dir: Path,
+    *,
+    handle: str,
+    title: str,
+    license_name: str = "CC0-1.0",
+    force: bool = False,
+) -> dict[str, str]:
+    source_dir = source_dir.expanduser().resolve()
+    output_dir = output_dir.expanduser().resolve()
+    if not source_dir.is_dir():
+        raise ValueError(f"Local dataset directory was not found: {source_dir}")
+    metadata_path = output_dir / "dataset-metadata.json"
+    if output_dir.exists() and any(output_dir.iterdir()) and not force:
+        raise FileExistsError(f"Kaggle dataset bundle already exists: {output_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if force:
+        for child in output_dir.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+    for child in source_dir.iterdir():
+        destination = output_dir / child.name
+        if child.is_dir():
+            shutil.copytree(child, destination)
+        else:
+            shutil.copy2(child, destination)
+    metadata = {
+        "id": handle,
+        "title": title,
+        "licenses": [{"name": license_name}],
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
+    return {
+        "bundle_dir": str(output_dir),
+        "metadata": str(metadata_path),
+        "handle": handle,
+        "upload_command": f"kgnite upload-dataset {output_dir} --public",
+    }
+
+
+def create_project_workspace(
+    name: str,
+    directory: Path,
+    *,
+    dataset_sources: list[str] | None = None,
+    kernel_sources: list[str] | None = None,
+    model_sources: list[str] | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    directory = directory.expanduser().resolve()
+    config_path = directory / f".{name}-config.json"
+    if config_path.exists() and not force:
+        raise FileExistsError(f"Project already exists: {config_path}")
+    for child in ("data", "notebooks", "submissions", "kaggle-notebooks", "kaggle-datasets"):
+        (directory / child).mkdir(parents=True, exist_ok=True)
+    config = {
+        "name": name,
+        "project_type": "project",
+        "data_dir": "data",
+        "notebook_dir": "notebooks",
+        "submission_dir": "submissions",
+        "dataset_sources": list(dataset_sources or []),
+        "competition_sources": [],
+        "kernel_sources": list(kernel_sources or []),
+        "model_sources": list(model_sources or []),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+    help_path = write_workspace_help(directory, name, project_type="project")
+    return {
+        "directory": str(directory),
+        "config": str(config_path),
+        "help": str(help_path),
+        **config,
+    }
 
 
 def starter_notebook(
@@ -279,7 +707,10 @@ def starter_notebook(
     *,
     participant: str,
     competition_notes: list[dict[str, str]] | None = None,
+    kaggle_data_sources: list[str] | None = None,
 ) -> dict[str, Any]:
+    config_name = f".{competition}-config.json"
+    kaggle_slugs = [source.rsplit("/", 1)[-1] for source in (kaggle_data_sources or [competition])]
     column_note = (
         ", ".join(columns)
         if columns
@@ -288,6 +719,7 @@ def starter_notebook(
     cells = [
         {
             "cell_type": "markdown",
+            "id": "project-introduction",
             "metadata": {},
             "source": [
                 f"# {competition} starter notebook\n",
@@ -297,19 +729,15 @@ def starter_notebook(
         },
         {
             "cell_type": "code",
+            "id": "data-setup",
             "execution_count": None,
             "metadata": {},
             "outputs": [],
-            "source": [
-                "from pathlib import Path\n",
-                "import pandas as pd\n",
-                f"DATA_DIR = Path({data_dir!r})\n",
-                "files = sorted(DATA_DIR.glob('**/*'))\n",
-                "[str(path) for path in files if path.is_file()][:20]\n",
-            ],
+            "source": portable_data_setup_source(config_name, data_dir, kaggle_slugs),
         },
         {
             "cell_type": "markdown",
+            "id": "data-loading-notes",
             "metadata": {},
             "source": [
                 "## Load competition data\n",
@@ -318,6 +746,7 @@ def starter_notebook(
         },
         {
             "cell_type": "code",
+            "id": "data-loading",
             "execution_count": None,
             "metadata": {},
             "outputs": [],
@@ -328,13 +757,14 @@ def starter_notebook(
                 "\n",
                 "train = find_csv('train')\n",
                 "test = find_csv('test')\n",
-                "sample_submission = find_csv('sample_submission')\n",
+                "sample_submission = find_csv('submission')\n",
                 "[(name, None if frame is None else frame.shape) for name, frame in "
                 "[('train', train), ('test', test), ('sample_submission', sample_submission)]]\n",
             ],
         },
         {
             "cell_type": "markdown",
+            "id": "baseline-notes",
             "metadata": {},
             "source": [
                 "## Baseline\n",
@@ -343,6 +773,7 @@ def starter_notebook(
         },
         {
             "cell_type": "code",
+            "id": "submission-baseline",
             "execution_count": None,
             "metadata": {},
             "outputs": [],
@@ -365,6 +796,7 @@ def starter_notebook(
             1,
             {
                 "cell_type": "markdown",
+                "id": f"competition-note-{len(cells)}",
                 "metadata": {"kgnite_note_page": name},
                 "source": [
                     f"## Competition notes: {name}\n\n",
@@ -396,6 +828,7 @@ def write_starter_notebook(
     *,
     participant: str,
     competition_notes: list[dict[str, str]] | None = None,
+    kaggle_data_sources: list[str] | None = None,
     force: bool = False,
 ) -> Path:
     output = output.expanduser().resolve()
@@ -405,10 +838,11 @@ def write_starter_notebook(
     columns = discover_sample_columns(data_dir.expanduser().resolve())
     notebook = starter_notebook(
         competition,
-        str(data_dir),
+        str(data_dir.expanduser().resolve()),
         columns,
         participant=participant,
         competition_notes=competition_notes,
+        kaggle_data_sources=kaggle_data_sources,
     )
     output.write_text(json.dumps(notebook, indent=2) + "\n")
     return output

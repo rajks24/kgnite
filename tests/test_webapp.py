@@ -1,4 +1,5 @@
 import json
+import base64
 import tempfile
 import threading
 import time
@@ -15,10 +16,26 @@ from kgnite.webapp import (
     page_html,
     parse_command,
     run_command,
+    save_uploaded_file,
 )
 
 
 class CommandTests(unittest.TestCase):
+    def test_uploaded_submission_is_saved_in_session_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            upload_dir = Path(temp)
+            session = WebSession("token", Path.cwd(), 30, 10, upload_dir=upload_dir)
+            saved = save_uploaded_file(
+                {
+                    "name": "../submission.csv",
+                    "content": base64.b64encode(b"PassengerId,Survived\n1,0\n").decode(),
+                },
+                session,
+            )
+            self.assertEqual(saved.parent, upload_dir)
+            self.assertTrue(saved.name.endswith("-submission.csv"))
+            self.assertEqual(saved.read_text(), "PassengerId,Survived\n1,0\n")
+
     def test_parse_command_accepts_optional_program_name(self):
         self.assertEqual(
             parse_command('kgnite search datasets "house prices" --json'),
@@ -53,6 +70,9 @@ class PageTests(unittest.TestCase):
         self.assertIn("overflow-x:auto", page)
         self.assertIn("Scroll horizontally", page)
         self.assertIn("Scrollable tabular results", page)
+        self.assertIn('type="file"', page)
+        self.assertIn("/api/upload", page)
+        self.assertIn('name="download" checked', page)
         self.assertIn("f.getAttribute('data-action')", page)
         self.assertNotIn("f.dataset.action", page)
         self.assertIn(".filter(Boolean).join('\\n')", page)
@@ -62,6 +82,8 @@ class PageTests(unittest.TestCase):
         page = page_html("token", Path("/workspace"))
         actions = {
             "search",
+            "settings",
+            "createProject",
             "trending",
             "setup",
             "template",
@@ -73,6 +95,8 @@ class PageTests(unittest.TestCase):
             "submissions",
             "leaderboard",
             "pull",
+            "prepareNotebook",
+            "pushNotebook",
             "uploadDataset",
             "uploadModel",
             "doctor",

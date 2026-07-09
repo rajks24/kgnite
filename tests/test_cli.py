@@ -2,12 +2,19 @@ import argparse
 import contextlib
 import io
 import json
+import os
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from kgnite.cli import KgniteError, command_preview, validate_resource_handle
+from kgnite.cli import (
+    KgniteError,
+    command_prepare_notebook,
+    command_preview,
+    validate_resource_handle,
+)
 
 
 class HandleValidationTests(unittest.TestCase):
@@ -84,6 +91,77 @@ class PreviewCommandTests(unittest.TestCase):
             thread.join(timeout=2)
         self.assertEqual(payload["shape"], {"rows": 3, "columns": 5})
         self.assertEqual(payload["displayed_columns"], 5)
+
+
+class PrepareNotebookCommandTests(unittest.TestCase):
+    def prepare_args(self, notebook: Path, **overrides: object) -> argparse.Namespace:
+        values = {
+            "notebook": str(notebook),
+            "handle": None,
+            "competition": None,
+            "dataset_source": None,
+            "competition_source": None,
+            "kernel_source": None,
+            "model_source": None,
+            "local_dataset": None,
+            "dataset_handle": None,
+            "dataset_title": None,
+            "dataset_license": None,
+            "title": None,
+            "output_dir": None,
+            "public": False,
+            "enable_internet": False,
+            "enable_gpu": False,
+            "force": False,
+            "json": True,
+        }
+        values.update(overrides)
+        return argparse.Namespace(**values)
+
+    def test_title_only_derives_matching_handle_and_bundle_dir(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            settings = root / "settings.json"
+            previous = os.environ.get("KGNITE_SETTINGS_PATH")
+            os.environ["KGNITE_SETTINGS_PATH"] = str(settings)
+            try:
+                notebook = root / "notebooks" / "iris.ipynb"
+                notebook.parent.mkdir()
+                notebook.write_text('{"nbformat": 4}')
+                output = io.StringIO()
+                args = self.prepare_args(
+                    notebook,
+                    title="Iris Flower Species Classification",
+                    public=True,
+                )
+                with contextlib.redirect_stdout(output):
+                    command_prepare_notebook(args)
+                payload = json.loads(output.getvalue())
+            finally:
+                if previous is None:
+                    os.environ.pop("KGNITE_SETTINGS_PATH", None)
+                else:
+                    os.environ["KGNITE_SETTINGS_PATH"] = previous
+        self.assertEqual(payload["handle"], "rajinh/iris-flower-species-classification")
+        self.assertTrue(payload["bundle_dir"].endswith("kaggle-notebooks/iris-flower-species-classification"))
+
+    def test_title_wins_when_handle_slug_does_not_match(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            notebook = root / "notebooks" / "iris.ipynb"
+            notebook.parent.mkdir()
+            notebook.write_text('{"nbformat": 4}')
+            output = io.StringIO()
+            args = self.prepare_args(
+                notebook,
+                handle="rajinh/iris-classification",
+                title="Iris Flower Species Classification",
+            )
+            with contextlib.redirect_stdout(output):
+                command_prepare_notebook(args)
+            payload = json.loads(output.getvalue())
+        self.assertEqual(payload["handle"], "rajinh/iris-flower-species-classification")
+        self.assertIn("Adjusted notebook handle", payload["notices"][0])
 
 
 if __name__ == "__main__":

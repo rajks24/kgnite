@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import secrets
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 import webbrowser
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -16,11 +18,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from kgnite.settings import load_settings
+
 
 ALLOWED_COMMANDS = {
     "usage",
     "completions",
     "doctor",
+    "settings",
+    "create-project",
+    "workspace-help",
     "search",
     "setup",
     "template",
@@ -31,6 +38,8 @@ ALLOWED_COMMANDS = {
     "files",
     "download",
     "pull-notebook",
+    "prepare-notebook",
+    "push-notebook",
     "submit",
     "leaderboard",
     "submissions",
@@ -38,6 +47,7 @@ ALLOWED_COMMANDS = {
     "upload-model",
 }
 MAX_BODY_BYTES = 64 * 1024
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 
 
@@ -48,6 +58,7 @@ class WebSession:
     heartbeat_timeout: float
     command_timeout: float
     connected: bool = False
+    upload_dir: Path | None = None
     last_heartbeat: float = field(default_factory=time.monotonic)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -62,6 +73,28 @@ class WebSession:
                 self.connected
                 and time.monotonic() - self.last_heartbeat > self.heartbeat_timeout
             )
+
+
+def save_uploaded_file(payload: dict[str, Any], session: WebSession) -> Path:
+    if session.upload_dir is None:
+        raise ValueError("File uploads are not available in this web session.")
+    filename = Path(str(payload.get("name", ""))).name
+    encoded = payload.get("content")
+    if not filename or filename in {".", ".."}:
+        raise ValueError("Select a valid submission file.")
+    if not isinstance(encoded, str):
+        raise ValueError("The uploaded file content is invalid.")
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("The uploaded file content is invalid.") from exc
+    if not content:
+        raise ValueError("The selected submission file is empty.")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise ValueError("The selected file exceeds the 100 MB upload limit.")
+    destination = session.upload_dir / f"{secrets.token_hex(8)}-{filename}"
+    destination.write_bytes(content)
+    return destination
 
 
 def parse_command(command: str) -> list[str]:
@@ -132,7 +165,7 @@ def run_command(arguments: list[str], session: WebSession) -> dict[str, Any]:
 
 
 def page_html(token: str, cwd: Path) -> str:
-    config = json.dumps({"token": token, "cwd": str(cwd)})
+    config = json.dumps({"token": token, "cwd": str(cwd), "settings": load_settings()})
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -160,7 +193,7 @@ def page_html(token: str, cwd: Path) -> str:
     <div class="card"><h2>Session lifecycle</h2><p>This server listens on localhost only. Close this page to end the session automatically, or press <code>Ctrl+C</code> in the terminal.</p></div>
   </section>
   <nav>
-    <button data-tab="discover" class="primary">Discover</button><button data-tab="competition">Competition</button><button data-tab="resources">Resources</button><button data-tab="uploads">Uploads</button><button data-tab="system">System</button><button data-tab="advanced">Advanced</button>
+    <button data-tab="discover" class="primary">Discover</button><button data-tab="competition">Competition</button><button data-tab="projects">Projects</button><button data-tab="resources">Resources</button><button data-tab="uploads">Uploads</button><button data-tab="settings">Settings</button><button data-tab="system">System</button><button data-tab="advanced">Advanced</button>
   </nav>
 
   <section id="discover" class="tab active"><div class="grid">
@@ -183,22 +216,27 @@ def page_html(token: str, cwd: Path) -> str:
       <button class="primary">Show resources</button></form></div>
   </div></section>
 
+  <section id="projects" class="tab"><div class="grid">
+    <div class="card"><h2>Create project</h2><p>Create a generic Kaggle-ready project under the configured projects directory.</p><form data-action="createProject">
+      <label>Project name<input name="name" required placeholder="customer-churn"></label><label>Directory (optional)<input name="directory" placeholder="Uses Settings → Workspace/projects"></label><label>Participant<input name="participant"></label><label>Kaggle dataset sources<input name="datasets" placeholder="owner/dataset-one, owner/dataset-two"></label><label>Kaggle notebook sources<input name="kernels" placeholder="owner/notebook"></label><label>Kaggle model sources<input name="models" placeholder="owner/model/framework/variation"></label><div class="row"><label class="check"><span><input type="checkbox" name="template" checked>Generate notebook</span></label><label class="check"><span><input type="checkbox" name="force">Replace generated files</span></label></div><button class="primary">Create project</button></form></div>
+  </div></section>
+
   <section id="competition" class="tab"><div class="grid">
     <div class="card"><h2>Set up competition</h2><form data-action="setup">
-      <label>Competition slug<input name="competition" required placeholder="titanic"></label><div class="row"><label>Workspace directory<input name="directory" placeholder="./titanic"></label><label>Participant name<input name="participant" placeholder="Your name"></label></div>
+      <label>Competition slug<input name="competition" required placeholder="titanic"></label><div class="row"><label>Workspace directory<input name="directory" placeholder="Uses Settings → Workspace/competitions"></label><label>Participant name<input name="participant" placeholder="Your name"></label></div>
       <div class="row"><label>Metric<input name="metric" value="publicScore"></label><label class="check"><span><input type="checkbox" name="lower">Lower score is better</span></label></div>
-      <div class="row"><label class="check"><span><input type="checkbox" name="download">Download data</span></label><label class="check"><span><input type="checkbox" name="template" checked>Generate notebook</span></label></div><div class="row"><label class="check"><span><input type="checkbox" name="notes" checked>Include official competition notes</span></label><label>Notes pages, comma separated<input name="notesPages" value="data-description" placeholder="data-description, evaluation"></label></div>
+      <div class="row"><label class="check"><span><input type="checkbox" name="download" checked>Download competition data</span></label><label class="check"><span><input type="checkbox" name="template" checked>Generate notebook</span></label></div><div class="row"><label class="check"><span><input type="checkbox" name="notes" checked>Include official competition notes</span></label><label>Notes pages, comma separated<input name="notesPages" value="data-description" placeholder="data-description, evaluation"></label></div>
       <label class="check"><span><input type="checkbox" name="force">Replace an existing generated workspace</span></label>
       <button class="primary">Create workspace</button></form></div>
     <div class="card"><h2>Generate notebook</h2><form data-action="template">
-      <label>Competition slug<input name="competition" required placeholder="titanic"></label><div class="row"><label>Participant name<input name="participant" placeholder="Your name"></label><label>Data directory<input name="data" value="./data"></label></div><label>Output notebook<input name="output" placeholder="./notebooks/starter.ipynb"></label><div class="row"><label class="check"><span><input type="checkbox" name="notes" checked>Include official competition notes</span></label><label>Notes pages<input name="notesPages" value="data-description"></label></div><label class="check"><span><input type="checkbox" name="force">Replace existing notebook</span></label>
+      <label>Competition slug<input name="competition" required placeholder="titanic"></label><div class="row"><label>Participant name<input name="participant" placeholder="Your name"></label><label>Data directory<input name="data" value="./data"></label></div><label>Output notebook<input name="output" placeholder="Auto: titanic-01.ipynb, titanic-02.ipynb, ..."></label><div class="row"><label class="check"><span><input type="checkbox" name="notes" checked>Include official competition notes</span></label><label>Notes pages<input name="notesPages" value="data-description"></label></div><label class="check"><span><input type="checkbox" name="force">Replace existing notebook</span></label>
       <button class="primary">Generate notebook</button></form></div>
     <div class="card"><h2>Performance history</h2><form data-action="performance">
       <label>Competition slug<input name="competition" required placeholder="titanic"></label><label>History file<input name="history" placeholder=".kgnite/titanic-scores.json"></label>
       <div class="row"><label class="check"><span><input type="checkbox" name="sync" checked>Sync from Kaggle</span></label><label class="check"><span><input type="checkbox" name="lower">Lower score is better</span></label></div>
       <button class="primary">Track performance</button></form></div>
     <div class="card"><h2>Submit result</h2><form data-action="submit">
-      <label>Competition slug<input name="competition" required></label><div class="row"><label>Submission file<input name="file" placeholder="./submission.csv"></label><label>Notebook handle<input name="kernel" placeholder="owner/notebook"></label></div><div class="row"><label>Notebook version<input name="version" type="number" min="1"></label><label>Message<input name="message" required placeholder="baseline v1"></label></div>
+      <label>Competition slug<input name="competition" required placeholder="titanic"></label><label>Submission file path<input name="filePath" placeholder="/path/to/submission.csv"></label><label>Or browse for a submission file (optional)<input name="filePicker" type="file" accept=".csv,.zip"></label><div class="row"><label>Notebook handle (code competitions)<input name="kernel" placeholder="owner/notebook"></label><label>Notebook version<input name="version" type="number" min="1"></label></div><label>Message<input name="message" required placeholder="Random Forest prediction"></label>
       <button class="primary">Submit to Kaggle</button></form></div>
   </div></section>
 
@@ -217,6 +255,10 @@ def page_html(token: str, cwd: Path) -> str:
   </div></section>
 
   <section id="uploads" class="tab"><div class="grid">
+    <div class="card"><h2>Prepare Kaggle notebook</h2><p>Create a project-local upload bundle without publishing it. The Kaggle slug is derived from the title.</p><form data-action="prepareNotebook">
+      <label>Notebook path<input name="notebook" required placeholder="./titanic/notebooks/titanic-01.ipynb"></label><label>Notebook title<input name="title" placeholder="Titanic Random Forest"></label><div class="row"><label>Kaggle handle owner/slug (optional)<input name="handle" placeholder="rajinh/titanic-random-forest"></label><label>Competition slug (optional)<input name="competition" placeholder="titanic"></label></div><label>Bundle directory (optional)<input name="output" placeholder="Auto: project/kaggle-notebooks/title-slug"></label><label>Dataset sources<input name="datasets" placeholder="owner/dataset, owner/another"></label><label>Competition sources<input name="competitions" placeholder="titanic"></label><label>Notebook sources<input name="kernels" placeholder="owner/notebook"></label><label>Model sources<input name="models" placeholder="owner/model/framework/variation"></label><details><summary>Stage a local dataset</summary><label>Local dataset directory<input name="localDataset"></label><label>Kaggle dataset handle<input name="datasetHandle" placeholder="rajinh/project-data"></label><div class="row"><label>Dataset title<input name="datasetTitle"></label><label>Dataset license<input name="datasetLicense" placeholder="Uses configured default"></label></div></details><div class="row"><label class="check"><span><input type="checkbox" name="public">Public notebook</span></label><label class="check"><span><input type="checkbox" name="force">Replace prepared bundles</span></label></div><button class="primary">Prepare notebook</button></form></div>
+    <div class="card"><h2>Push Kaggle notebook</h2><p>Create or update a previously prepared notebook in your Kaggle profile.</p><form data-action="pushNotebook">
+      <label>Bundle directory<input name="directory" required placeholder="./titanic/kaggle-notebooks/titanic-rf"></label><div class="row"><label>Timeout in seconds<input name="timeout" type="number" min="1"></label><label>Accelerator<input name="accelerator" placeholder="optional"></label></div><div class="row"><label class="check"><span><input type="checkbox" name="withDatasets">Push staged local datasets first</span></label><label>Dataset action<select name="datasetAction"><option>create</option><option>version</option></select></label></div><label class="check"><span><input type="checkbox" name="publicDatasets" checked>Make newly created datasets public</span></label><button class="primary">Push to Kaggle</button></form></div>
     <div class="card"><h2>Upload dataset</h2><p>Provide a handle for direct KaggleHub mode, or leave it empty for metadata-folder CLI mode.</p><form data-action="uploadDataset">
       <label>Local directory<input name="directory" required placeholder="./my-dataset"></label><label>Dataset handle (optional)<input name="handle" placeholder="owner/dataset"></label><label>Message<input name="message"></label><label>Ignore patterns, comma separated<input name="ignore"></label>
       <div class="row"><label class="check"><span><input type="checkbox" name="version">Create a new version</span></label><label class="check"><span><input type="checkbox" name="public">Public dataset</span></label></div>
@@ -225,6 +267,11 @@ def page_html(token: str, cwd: Path) -> str:
     <div class="card"><h2>Upload model</h2><p>Provide a handle for KaggleHub mode, or use create/update metadata mode.</p><form data-action="uploadModel">
       <label>Local directory<input name="directory" required placeholder="./my-model"></label><label>Model handle (optional)<input name="handle" placeholder="owner/model/framework/variation"></label><div class="row"><label>Message<input name="message"></label><label>License<input name="license"></label></div><label>Ignore patterns, comma separated<input name="ignore"></label>
       <div class="row"><label>Metadata action<select name="modelAction"><option>create</option><option>update</option></select></label><label class="check"><span><input type="checkbox" name="sigstore">Enable Sigstore</span></label></div><button class="primary">Upload model</button></form></div>
+  </div></section>
+
+  <section id="settings" class="tab"><div class="grid">
+    <div class="card"><h2>Workspace settings</h2><p>Stored in <code id="settingsFile"></code>.</p><form data-action="settings">
+      <label>Workspace directory<input name="workspace" required></label><div class="row"><label>Competitions folder<input name="competitions" required></label><label>Projects folder<input name="projects" required></label></div><label>Kaggle username<input name="username"></label><label>Default dataset license<input name="license" placeholder="CC0-1.0"></label><button class="primary">Save settings</button></form></div>
   </div></section>
 
   <section id="system" class="tab"><div class="grid">
@@ -240,7 +287,7 @@ def page_html(token: str, cwd: Path) -> str:
   <section id="resultWrap" class="card"><div class="result-head"><h2>Result</h2><div class="result-tools"><button type="button" id="tableView" class="view-toggle active">Table</button><button type="button" id="jsonView" class="view-toggle">JSON</button><span id="resultStatus">Ready</span></div></div><div id="result"><pre>Results will appear here.</pre></div></section>
 </main>
 <script>
-const CONFIG={config}; document.querySelector('#cwd').textContent=CONFIG.cwd;
+const CONFIG={config}; document.querySelector('#cwd').textContent=CONFIG.cwd; document.querySelector('#settingsFile').textContent=CONFIG.settings.settings_file; const settingsForm=document.querySelector('[data-action=settings]'); settingsForm.elements.workspace.value=CONFIG.settings.workspace_dir; settingsForm.elements.competitions.value=CONFIG.settings.competitions_dir; settingsForm.elements.projects.value=CONFIG.settings.projects_dir; settingsForm.elements.username.value=CONFIG.settings.kaggle_username||''; settingsForm.elements.license.value=CONFIG.settings.default_dataset_license||'';
 const result=document.querySelector('#result'), statusEl=document.querySelector('#resultStatus'), tableButton=document.querySelector('#tableView'), jsonButton=document.querySelector('#jsonView');
 let lastResponse=null, resultMode='table';
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{{ document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); document.querySelector('#'+b.dataset.tab).classList.add('active'); document.querySelectorAll('[data-tab]').forEach(x=>x.classList.remove('primary')); b.classList.add('primary'); }});
@@ -249,18 +296,22 @@ function csv(value){{ return value.split(',').map(x=>x.trim()).filter(Boolean); 
 function build(action,f){{ let a=[]; const e=f.elements;
   if(action==='search'){{ a=['search',e.resource.value]; if(e.query.value)a.push(e.query.value); add(a,'--sort-by',e.sort.value); add(a,'--page',e.page.value); add(a,'--page-size',e.pageSize.value); add(a,'--owner',e.owner.value); add(a,'--user',e.user.value); add(a,'--category',e.category.value); add(a,'--group',e.group.value); add(a,'--language',e.language.value); add(a,'--kernel-type',e.kernelType.value); add(a,'--output-type',e.outputType.value); add(a,'--dataset',e.dataset.value); add(a,'--competition',e.competition.value); csv(e.tags.value).forEach(x=>add(a,'--tag',x)); csv(e.keywords.value).forEach(x=>add(a,'--keyword',x)); a.push('--json'); }}
   if(action==='trending'){{ a=['trending',e.resource.value,'--order',e.order.value,'--limit',e.limit.value]; add(a,'--search',e.query.value); add(a,'--category',e.category.value); csv(e.tags.value).forEach(x=>add(a,'--tag',x)); csv(e.keywords.value).forEach(x=>add(a,'--keyword',x)); a.push('--json'); }}
-  if(action==='setup'){{ a=['setup',e.competition.value,'--directory',e.directory.value||('./'+e.competition.value),'--metric',e.metric.value,e.lower.checked?'--lower-is-better':'--no-lower-is-better',e.download.checked?'--download':'--no-download',e.template.checked?'--template':'--no-template',e.notes.checked?'--competition-notes':'--no-competition-notes']; add(a,'--participant',e.participant.value); if(e.notes.checked)csv(e.notesPages.value).forEach(x=>add(a,'--notes-page',x)); if(e.force.checked)a.push('--force'); a.push('--json'); }}
+  if(action==='setup'){{ a=['setup',e.competition.value,'--metric',e.metric.value,e.lower.checked?'--lower-is-better':'--no-lower-is-better',e.download.checked?'--download':'--no-download',e.template.checked?'--template':'--no-template',e.notes.checked?'--competition-notes':'--no-competition-notes']; add(a,'--directory',e.directory.value); add(a,'--participant',e.participant.value); if(e.notes.checked)csv(e.notesPages.value).forEach(x=>add(a,'--notes-page',x)); if(e.force.checked)a.push('--force'); a.push('--json'); }}
+  if(action==='createProject'){{ a=['create-project',e.name.value,e.template.checked?'--template':'--no-template']; add(a,'--directory',e.directory.value); add(a,'--participant',e.participant.value); csv(e.datasets.value).forEach(x=>add(a,'--dataset-source',x)); csv(e.kernels.value).forEach(x=>add(a,'--kernel-source',x)); csv(e.models.value).forEach(x=>add(a,'--model-source',x)); if(e.force.checked)a.push('--force'); a.push('--json'); }}
   if(action==='template'){{ a=['template',e.competition.value,'--data-dir',e.data.value,e.notes.checked?'--competition-notes':'--no-competition-notes']; add(a,'--participant',e.participant.value); add(a,'--output',e.output.value); if(e.notes.checked)csv(e.notesPages.value).forEach(x=>add(a,'--notes-page',x)); if(e.force.checked)a.push('--force'); a.push('--json'); }}
   if(action==='performance'){{ a=['performance',e.competition.value]; add(a,'--history',e.history.value); if(e.sync.checked)a.push('--sync'); if(e.lower.checked)a.push('--lower-is-better'); a.push('--json'); }}
-  if(action==='submit'){{ a=['submit',e.competition.value]; add(a,'--file',e.file.value); add(a,'--kernel',e.kernel.value); add(a,'--version',e.version.value); a.push('--message',e.message.value,'--json'); }}
+  if(action==='submit'){{ a=['submit',e.competition.value]; add(a,'--file',e.filePath.value); add(a,'--kernel',e.kernel.value); add(a,'--version',e.version.value); a.push('--message',e.message.value,'--json'); }}
   if(action==='inspect'){{ a=[e.action.value,e.resource.value,e.handle.value]; if(e.action.value==='files'){{ add(a,'--page-size',e.pageSize.value); add(a,'--page-token',e.pageToken.value); }} a.push('--json'); }}
   if(action==='download'){{ a=['download',e.resource.value,e.handle.value]; add(a,'--path',e.path.value); add(a,'--output-dir',e.output.value); if(e.force.checked)a.push('--force'); a.push('--json'); }}
   if(action==='preview'){{ a=['preview',e.sourceType.value,e.source.value,'--rows',e.rows.value,'--columns',e.columns.value,'--max-file-size-mb',e.maxSize.value]; if(e.sourceType.value==='dataset') add(a,'--path',e.path.value); if(e.force.checked && e.sourceType.value==='dataset')a.push('--force'); a.push('--json'); }}
   if(action==='submissions'){{ a=['submissions',e.competition.value,'--json']; }}
   if(action==='leaderboard'){{ a=['leaderboard',e.competition.value]; if(e.output.value){{ a.push('--download'); add(a,'--output-dir',e.output.value); }}else a.push('--show'); add(a,'--page-size',e.pageSize.value); add(a,'--page-token',e.pageToken.value); a.push('--json'); }}
   if(action==='pull'){{ a=['pull-notebook',e.handle.value]; add(a,'--output-dir',e.output.value); a.push('--json'); }}
+  if(action==='prepareNotebook'){{ a=['prepare-notebook',e.notebook.value]; add(a,'--handle',e.handle.value); add(a,'--competition',e.competition.value); add(a,'--title',e.title.value); add(a,'--output-dir',e.output.value); csv(e.datasets.value).forEach(x=>add(a,'--dataset-source',x)); csv(e.competitions.value).forEach(x=>add(a,'--competition-source',x)); csv(e.kernels.value).forEach(x=>add(a,'--kernel-source',x)); csv(e.models.value).forEach(x=>add(a,'--model-source',x)); add(a,'--local-dataset',e.localDataset.value); add(a,'--dataset-handle',e.datasetHandle.value); add(a,'--dataset-title',e.datasetTitle.value); add(a,'--dataset-license',e.datasetLicense.value); if(e.public.checked)a.push('--public'); if(e.force.checked)a.push('--force'); a.push('--json'); }}
+  if(action==='pushNotebook'){{ a=['push-notebook',e.directory.value]; add(a,'--timeout',e.timeout.value); add(a,'--accelerator',e.accelerator.value); if(e.withDatasets.checked)a.push('--with-datasets','--dataset-action',e.datasetAction.value,e.publicDatasets.checked?'--public-datasets':'--no-public-datasets'); a.push('--json'); }}
   if(action==='uploadDataset'){{ a=['upload-dataset',e.directory.value]; add(a,'--handle',e.handle.value); add(a,'--message',e.message.value); if(e.version.checked)a.push('--version'); if(e.public.checked)a.push('--public'); if(e.keep.checked)a.push('--keep-tabular'); add(a,'--dir-mode',e.dirMode.value); if(e.deleteOld.checked)a.push('--delete-old-versions'); if(e.ignore.value) a.push('--ignore',...csv(e.ignore.value)); a.push('--json'); }}
   if(action==='uploadModel'){{ a=['upload-model',e.directory.value]; add(a,'--handle',e.handle.value); add(a,'--message',e.message.value); add(a,'--license-name',e.license.value); if(e.sigstore.checked)a.push('--sigstore'); add(a,'--action',e.modelAction.value); if(e.ignore.value) a.push('--ignore',...csv(e.ignore.value)); a.push('--json'); }}
+  if(action==='settings'){{ a=['settings','--workspace-dir',e.workspace.value,'--competitions-dir',e.competitions.value,'--projects-dir',e.projects.value]; add(a,'--kaggle-username',e.username.value); add(a,'--default-dataset-license',e.license.value); a.push('--json'); }}
   if(action==='doctor'){{ a=['doctor','--json']; }}
   if(action==='usage'){{ a=['usage']; }}
   if(action==='completions'){{ a=['completions','--shell',e.shell.value,'--print']; }} return a; }}
@@ -269,7 +320,8 @@ function renderTable(rows){{ const wrap=document.createElement('div'); wrap.clas
 function renderResult(){{ tableButton.classList.toggle('active',resultMode==='table'); jsonButton.classList.toggle('active',resultMode==='json'); if(!lastResponse) return; const data=lastResponse.data, rows=Array.isArray(data)?data:(data && Array.isArray(data.rows)?data.rows:null); if(resultMode==='table' && rows){{ renderTable(rows); return; }} const pre=document.createElement('pre'); pre.textContent=data!==null&&data!==undefined?JSON.stringify(data,null,2):[lastResponse.stdout,lastResponse.stderr].filter(Boolean).join('\\n')||JSON.stringify(lastResponse,null,2); result.replaceChildren(pre); }}
 tableButton.onclick=()=>{{ resultMode='table'; renderResult(); }}; jsonButton.onclick=()=>{{ resultMode='json'; renderResult(); }};
 async function execute(payload){{ statusEl.textContent='Running…'; statusEl.className='busy'; const pre=document.createElement('pre'); pre.textContent='Working locally. Kaggle operations may take a moment.'; result.replaceChildren(pre); try {{ const r=await fetch('/api/run',{{method:'POST',headers:{{'Content-Type':'application/json','X-Kgnite-Token':CONFIG.token}},body:JSON.stringify(payload)}}); lastResponse=await r.json(); statusEl.textContent=lastResponse.ok?'Completed':'Failed'; statusEl.className=lastResponse.ok?'':'error'; renderResult(); }} catch(e){{ lastResponse={{ok:false,data:null,stdout:'',stderr:String(e)}}; statusEl.textContent='Error'; statusEl.className='error'; renderResult(); }} result.scrollIntoView({{behavior:'smooth',block:'nearest'}}); }}
-document.querySelectorAll('form').forEach(f=>f.onsubmit=e=>{{ e.preventDefault(); const action=f.getAttribute('data-action'); if(['submit','uploadDataset','uploadModel'].includes(action) && !window.confirm('This operation changes data on Kaggle. Continue?')) return; execute(action==='advanced'?{{command:f.elements.command.value}}:{{arguments:build(action,f)}}); }});
+async function uploadSelectedFile(f){{ const file=f.elements.filePicker?.files[0]; if(!file)return; if(file.size>100*1024*1024)throw new Error('The selected file exceeds the 100 MB upload limit.'); const content=await new Promise((resolve,reject)=>{{ const reader=new FileReader(); reader.onload=()=>resolve(String(reader.result).split(',',2)[1]); reader.onerror=()=>reject(reader.error); reader.readAsDataURL(file); }}); const r=await fetch('/api/upload',{{method:'POST',headers:{{'Content-Type':'application/json','X-Kgnite-Token':CONFIG.token}},body:JSON.stringify({{name:file.name,content}})}}); const response=await r.json(); if(!r.ok)throw new Error(response.error||'File upload failed.'); f.elements.filePath.value=response.path; }}
+document.querySelectorAll('form').forEach(f=>f.onsubmit=async e=>{{ e.preventDefault(); const action=f.getAttribute('data-action'); if(['submit','pushNotebook','uploadDataset','uploadModel'].includes(action) && !window.confirm('This operation changes data on Kaggle. Continue?')) return; try{{ if(action==='submit')await uploadSelectedFile(f); execute(action==='advanced'?{{command:f.elements.command.value}}:{{arguments:build(action,f)}}); }}catch(error){{ lastResponse={{ok:false,data:null,stdout:'',stderr:String(error)}}; statusEl.textContent='Error'; statusEl.className='error'; renderResult(); }} }});
 async function beat(){{ try{{ await fetch('/api/heartbeat',{{method:'POST',headers:{{'X-Kgnite-Token':CONFIG.token}}}}); }}catch(_){{}} }} beat(); setInterval(beat,2000);
 </script>
 </body></html>"""
@@ -316,17 +368,17 @@ Limit: 20</pre>
 Workspace: ./titanic
 Metric: accuracy
 Download data: checked
-Generate notebook: checked</pre><p>This creates <code>.kgnite.json</code>, <code>data/</code>, <code>notebooks/</code>, and <code>submissions/</code>. Enable replacement only when overwriting generated files is intentional.</p>
+Generate notebook: checked</pre><p>This creates <code>.&lt;competition-slug&gt;-config.json</code>, <code>data/</code>, <code>notebooks/</code>, and <code>submissions/</code>. Enable replacement only when overwriting generated files is intentional.</p>
 <h3>Generate a notebook</h3><pre>Competition: titanic
 Participant: Your Name
 Data directory: ./titanic/data
-Output: ./titanic/notebooks/starter.ipynb
+Output: ./titanic/notebooks/titanic-02.ipynb
 Official notes: checked
 Notes pages: data-description, evaluation</pre><p>The notebook is presented as the participant's personal workspace. Official page content is fetched through Kaggle's API, linked to its source, sanitized, and embedded for reference.</p>
 <h3>Track scores</h3><pre>Competition: titanic
 History: ./titanic/scores.json
 Sync from Kaggle: checked</pre><p>Enable lower-is-better for loss or error metrics. Disable synchronization to view local history without contacting Kaggle.</p>
-<h3>Submit</h3><p>For file competitions, provide a local submission file. For code competitions, provide a notebook handle and version. The browser asks for confirmation before submitting.</p><pre>Competition: titanic
+<h3>Submit</h3><p>For file competitions, enter a local path or use the optional file picker. Selected files use temporary storage that is removed when the web session ends. For code competitions, provide a notebook handle and version. The browser asks for confirmation before submitting.</p><pre>Competition: titanic
 Submission file: ./titanic/submissions/submission.csv
 Message: random forest baseline</pre>
 
@@ -341,7 +393,7 @@ Maximum file size: 25 MB</pre><h3>Download</h3><pre>Type: dataset
 Handle: tawfikelmetwally/employee-dataset
 Output directory: ./downloads/employees</pre><p>Provide a remote path to fetch one file. Force refresh bypasses cached data. Notebook source uses <strong>Pull notebook source</strong>; generated notebook files use download type <code>notebook-output</code>.</p><p>Leaderboard displays rows unless you provide a download directory. Submission history requires that you have joined the competition and accepted its rules.</p>
 
-<h2 id="uploads">6. Upload datasets and models</h2><p>Uploads change Kaggle data and require confirmation. Providing a handle uses direct KaggleHub mode; leaving it blank uses Kaggle CLI metadata-folder mode.</p><h3>Dataset example</h3><pre>Local directory: ./my-dataset
+<h2 id="uploads">6. Upload notebooks, datasets, and models</h2><p>Uploads change Kaggle data and require confirmation. Notebook preparation derives the Kaggle slug from the title so the metadata ID matches Kaggle's URL behavior. Add a notebook handle only when choosing a different owner. Dataset and model handles use direct KaggleHub mode; leaving them blank uses Kaggle CLI metadata-folder mode.</p><h3>Dataset example</h3><pre>Local directory: ./my-dataset
 Handle: username/my-dataset
 Message: initial version
 Ignore: .DS_Store, *.tmp</pre><h3>Model example</h3><pre>Local directory: ./my-model
@@ -349,7 +401,7 @@ Handle: username/model-name/pytorch/base
 Message: initial version
 License: Apache-2.0</pre>
 
-<h2 id="system">7. System and Advanced</h2><ul><li><strong>Diagnostics</strong> checks runtime and authentication.</li><li><strong>Usage</strong> displays built-in examples.</li><li><strong>Completions</strong> prints definitions without modifying shell files.</li><li><strong>Advanced</strong> runs uncommon non-interactive option combinations without using a shell.</li></ul><pre>kgnite search kernels rag --language python --kernel-type notebook --json</pre><p>Recursive <code>web</code> and terminal-interactive <code>browse</code> commands are blocked. Discover and Resources replace the terminal browse workflow.</p>
+<h2 id="system">7. System and Advanced</h2><ul><li><strong>Diagnostics</strong> checks runtime and authentication.</li><li><strong>Usage</strong> displays built-in examples.</li><li><strong>Completions</strong> prints definitions without modifying shell files.</li><li><strong>Advanced</strong> runs uncommon non-interactive option combinations without using a shell.</li></ul><p>To install or refresh shell completions on this workstation, run <code>kgnite completions</code> in a terminal after installing or updating kgnite. It writes files under <code>~/.local/share/kgnite/completions</code> and prints the line to add to <code>~/.zshrc</code> or <code>~/.bashrc</code>. On another workstation, install or update kgnite there first, then run the same command.</p><pre>kgnite search kernels rag --language python --kernel-type notebook --json</pre><p>Recursive <code>web</code> and terminal-interactive <code>browse</code> commands are blocked. Discover and Resources replace the terminal browse workflow.</p>
 
 <h2 id="results">8. Table and JSON results</h2><p>Arrays of rows open in Table view with sticky headers. Select JSON for raw fields, nested values, or machine-readable copying. Plain-text commands automatically use a text panel.</p>
 
@@ -416,14 +468,23 @@ def make_handler(session: WebSession) -> type[BaseHTTPRequestHandler]:
             if path == "/api/heartbeat":
                 self._json({"ok": True})
                 return
-            if path != "/api/run":
+            if path not in {"/api/run", "/api/upload"}:
                 self._json({"ok": False, "error": "Not found"}, HTTPStatus.NOT_FOUND)
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if length <= 0 or length > MAX_BODY_BYTES:
+                request_limit = (
+                    (MAX_UPLOAD_BYTES * 4 // 3) + 4096
+                    if path == "/api/upload"
+                    else MAX_BODY_BYTES
+                )
+                if length <= 0 or length > request_limit:
                     raise ValueError("Invalid request size.")
                 payload = json.loads(self.rfile.read(length))
+                if path == "/api/upload":
+                    uploaded = save_uploaded_file(payload, session)
+                    self._json({"ok": True, "path": str(uploaded)})
+                    return
                 arguments = payload.get("arguments")
                 if arguments is None:
                     arguments = parse_command(str(payload.get("command", "")))
@@ -464,11 +525,13 @@ def serve_web_app(
         raise ValueError("Heartbeat timeout must be at least 5 seconds.")
     if command_timeout <= 0:
         raise ValueError("Command timeout must be greater than zero.")
+    upload_area = tempfile.TemporaryDirectory(prefix="kgnite-web-")
     session = WebSession(
         secrets.token_urlsafe(32),
         Path.cwd().resolve(),
         heartbeat_timeout,
         command_timeout,
+        upload_dir=Path(upload_area.name),
     )
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(session))
     server.daemon_threads = True
@@ -493,4 +556,5 @@ def serve_web_app(
         print("\nStopping kgnite web app.")
     finally:
         server.server_close()
+        upload_area.cleanup()
     return 0

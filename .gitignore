@@ -1,3 +1,50 @@
-.venv/
+# Python bytecode and caches
 __pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging and build artifacts
+build/
+dist/
 *.egg-info/
+*.egg
+pip-wheel-metadata/
+
+# Test, coverage, and tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+.kaggle/
+kaggle.json
+
+# Jupyter/IPython local state
+.ipynb_checkpoints/
+.ipython/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# kgnite local runtime/workspace artifacts
+.kgnite/
+*.log

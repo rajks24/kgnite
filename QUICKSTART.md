@@ -31,6 +31,8 @@ Then set up completions:
 kgnite completions
 ```
 
+Run `kgnite completions` again after every `kgnite` reinstall or upgrade so the local shell definitions include the latest commands. It writes completion files under `~/.local/share/kgnite/completions` and prints the line to add to `~/.zshrc` or `~/.bashrc`.
+
 User-local install without sudo:
 
 ```bash
@@ -41,6 +43,12 @@ hash -r
 ```
 
 Then set up completions:
+
+```bash
+kgnite completions
+```
+
+On another workstation, repeat the install command there and then run:
 
 ```bash
 kgnite completions
